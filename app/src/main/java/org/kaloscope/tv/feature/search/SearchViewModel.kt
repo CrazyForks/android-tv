@@ -62,7 +62,13 @@ class SearchViewModel @Inject constructor(
 
     fun retry(session: Session) = startRequest { coordinator.retry(session) }
 
-    fun loadNext(session: Session) = startRequest { coordinator.loadNext(session) }
+    fun loadNext(session: Session) {
+        // Pagination must not replace an in-flight page or an explicit user request.
+        if (requestJob?.isActive == true) {
+            return
+        }
+        startRequest { coordinator.loadNext(session) }
+    }
 
     fun openFilters() = coordinator.openFilters()
 

@@ -54,6 +54,10 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun loadNext(session: Session) {
+        // Pagination must not replace an in-flight page or an explicit user request.
+        if (requestJob?.isActive == true) {
+            return
+        }
         startRequest { coordinator.loadNext(session) }
     }
 

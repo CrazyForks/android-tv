@@ -87,6 +87,61 @@ class LibraryViewModelTest {
     }
 
     @Test
+    fun `repeated pagination keeps the same request and allows later pages`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page(201, hasNext = true)))
+        runCurrent()
+        viewModel.loadNext(session())
+        runCurrent()
+        val pendingPage = repository.requests.last()
+
+        repeat(2) {
+            viewModel.loadNext(session())
+            runCurrent()
+        }
+
+        assertFalse("Duplicate pagination must not cancel the pending page", pendingPage.cancelled)
+        assertEquals(listOf(1, 2), repository.requests.map { it.pageNumber })
+        pendingPage.result.complete(AppResult.Success(page(202, pageNumber = 2, hasNext = true)))
+        runCurrent()
+        viewModel.loadNext(session())
+        runCurrent()
+        assertEquals(listOf(1, 2, 3), repository.requests.map { it.pageNumber })
+        repository.requests.last().result.complete(AppResult.Success(page(203, pageNumber = 3)))
+        runCurrent()
+
+        val content = viewModel.uiState.value as LibraryUiState.Content
+        val items = content.items as LibraryItemsState.Content
+        assertEquals(listOf(201L, 202L, 203L), items.items.map { it.id })
+        assertFalse(items.isLoadingMore)
+    }
+
+    @Test
+    fun `pagination does not cancel a pending library search`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page(201, hasNext = true)))
+        runCurrent()
+        viewModel.updateQuery("new query")
+        viewModel.search(session())
+        runCurrent()
+        val pendingSearch = repository.requests.last()
+
+        viewModel.loadNext(session())
+        runCurrent()
+
+        assertFalse("Pagination must not replace a pending search", pendingSearch.cancelled)
+        assertEquals(listOf(1, 1), repository.requests.map { it.pageNumber })
+        pendingSearch.result.complete(AppResult.Success(page(501)))
+        runCurrent()
+
+        val content = viewModel.uiState.value as LibraryUiState.Content
+        assertEquals("new query", content.submittedKeyword)
+        assertEquals(listOf(501L), content.items.items.map { it.id })
+    }
+
+    @Test
     fun `selecting another library cancels the pending request`() = runTest(dispatcher) {
         viewModel.load(session())
         runCurrent()
@@ -160,7 +215,7 @@ private fun page(
             episode = null,
         ),
     ),
-    total = if (hasNext || pageNumber > 1) 21 else 1,
+    total = if (hasNext) pageNumber * 20 + 1 else (pageNumber - 1) * 20 + 1,
     pageNumber = pageNumber,
     pageSize = 20,
     hasNext = hasNext,
