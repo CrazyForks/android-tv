@@ -125,13 +125,12 @@ internal fun IndexerResourceData.toPlaybackSource(
         }
     }
     val videoType = videoType.resolveVideoType(fallbackVideoType)
-    val serverSelectedDefinitionIndex = mappedDefinitions
+    val preferredDefinitionIndex = mappedDefinitions
         .indexOfFirst { it.label.matches(preferredDefinition) }
         .takeIf { it >= 0 }
-        ?: mappedDefinitions.indices.firstOrNull()
     val selectedDefinitionIndex = NetworkDefinitionSelectionPolicy.selectIndex(
         definitions = mappedDefinitions,
-        serverSelectedIndex = serverSelectedDefinitionIndex,
+        serverSelectedIndex = preferredDefinitionIndex,
         preferHevc = videoType == NetworkVideoType.Dash && preferHevcForDash,
     )
     val mappedChapters = toChapters()

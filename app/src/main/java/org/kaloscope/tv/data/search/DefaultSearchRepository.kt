@@ -8,7 +8,6 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
-import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.DEFAULT_COVER_ASPECT_RATIO
 import org.kaloscope.tv.core.model.IndexerSourceProfile
@@ -41,26 +40,18 @@ class DefaultSearchRepository @Inject constructor(
             indexers.map { indexer ->
                 async {
                     semaphore.withPermit {
-                        when (val result = getProfile(session, indexer)) {
-                            is AppResult.Failure -> ProfileLoad.Failed(result.error)
-                            is AppResult.Success -> if (result.value == null) {
-                                ProfileLoad.Hidden
-                            } else {
-                                ProfileLoad.Available(result.value)
-                            }
-                        }
+                        getProfile(session, indexer)
                     }
                 }
             }.awaitAll()
         }
         val profiles = loads.mapNotNull { load ->
-            (load as? ProfileLoad.Available)?.profile
+            (load as? AppResult.Success)?.value
         }
         if (profiles.isNotEmpty()) {
             return AppResult.Success(profiles)
         }
-        val failure = loads.filterIsInstance<ProfileLoad.Failed>().firstOrNull()
-        return failure?.let { AppResult.Failure(it.error) }
+        return loads.filterIsInstance<AppResult.Failure>().firstOrNull()
             ?: AppResult.Success(emptyList())
     }
 
@@ -133,14 +124,6 @@ class DefaultSearchRepository @Inject constructor(
         const val DEFAULT_PAGE_SIZE = 20
         const val PROFILE_LOAD_CONCURRENCY = 4
     }
-}
-
-private sealed interface ProfileLoad {
-    data class Available(val profile: IndexerSourceProfile) : ProfileLoad
-
-    data object Hidden : ProfileLoad
-
-    data class Failed(val error: AppError) : ProfileLoad
 }
 
 internal fun String?.toCoverAspectRatio(): Float {

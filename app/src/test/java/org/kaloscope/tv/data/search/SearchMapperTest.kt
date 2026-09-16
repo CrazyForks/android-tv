@@ -341,6 +341,66 @@ class SearchMapperTest {
     }
 
     @Test
+    fun `missing preferred quality falls back to first valid definition`() {
+        val source = IndexerResourceData(
+            id = "v1",
+            title = "视频",
+            mediaType = "video",
+            url = "https://cdn.example/master.m3u8",
+            videoType = "hls",
+            definitions = listOf(
+                IndexerDefinitionData(url = " ", definition = JsonPrimitive("1080P")),
+                IndexerDefinitionData(
+                    url = "https://cdn.example/720.m3u8",
+                    definition = JsonPrimitive("720P"),
+                ),
+                IndexerDefinitionData(
+                    url = "https://cdn.example/480.m3u8",
+                    definition = JsonPrimitive("480P"),
+                ),
+            ),
+        ).toPlaybackSource(
+            indexerId = 11,
+            fallbackTitle = "备用",
+            preferredDefinition = TranscodeResolution.Original,
+        )
+
+        checkNotNull(source)
+        assertEquals(listOf("720P", "480P"), source.definitions.map { it.label })
+        assertEquals(0, source.selectedDefinitionIndex)
+        assertEquals("https://cdn.example/720.m3u8", source.url)
+    }
+
+    @Test
+    fun `missing preferred DASH quality still applies HEVC preference`() {
+        val source = IndexerResourceData(
+            id = "v1",
+            title = "视频",
+            mediaType = "video",
+            videoType = "dash",
+            definitions = listOf(
+                IndexerDefinitionData(
+                    url = "https://cdn.example/480-avc.mpd",
+                    definition = JsonPrimitive("480P AVC"),
+                ),
+                IndexerDefinitionData(
+                    url = "https://cdn.example/480-hevc.mpd",
+                    definition = JsonPrimitive("480P HEVC"),
+                ),
+            ),
+        ).toPlaybackSource(
+            indexerId = 11,
+            fallbackTitle = "备用",
+            preferredDefinition = TranscodeResolution.P1080,
+            preferHevcForDash = true,
+        )
+
+        checkNotNull(source)
+        assertEquals(1, source.selectedDefinitionIndex)
+        assertEquals("https://cdn.example/480-hevc.mpd", source.url)
+    }
+
+    @Test
     fun `DASH mapping prefers matching HEVC definition when requested`() {
         val source = IndexerResourceData(
             id = "v1",

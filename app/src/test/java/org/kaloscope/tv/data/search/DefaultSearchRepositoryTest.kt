@@ -11,6 +11,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.NetworkIndexer
 import org.kaloscope.tv.core.model.NetworkMediaType
@@ -71,7 +72,7 @@ class DefaultSearchRepositoryTest {
         server.dispatcher = catalogDispatcher(
             mapOf(
                 11L to CatalogSite(loginRequired = false),
-                12L to CatalogSite(loginRequired = false, failConfig = true),
+                12L to CatalogSite(loginRequired = false, configFailureCode = 500),
             ),
         )
 
@@ -81,6 +82,41 @@ class DefaultSearchRepositoryTest {
             listOf(11L),
             (result as AppResult.Success).value.map { it.indexer.id },
         )
+    }
+
+    @Test
+    fun `catalog keeps source order across hidden and failed profiles`() = runTest {
+        server.dispatcher = catalogDispatcher(
+            mapOf(
+                14L to CatalogSite(loginRequired = false),
+                13L to CatalogSite(loginRequired = true),
+                12L to CatalogSite(loginRequired = false, configFailureCode = 500),
+                11L to CatalogSite(loginRequired = false),
+            ),
+        )
+
+        val result = repository.getAvailableProfiles(session())
+
+        assertEquals(
+            listOf(14L, 11L),
+            (result as AppResult.Success).value.map { it.indexer.id },
+        )
+        assertEquals(6, server.requestCount)
+    }
+
+    @Test
+    fun `catalog returns first profile error in source order`() = runTest {
+        server.dispatcher = catalogDispatcher(
+            mapOf(
+                13L to CatalogSite(loginRequired = true),
+                12L to CatalogSite(loginRequired = false, configFailureCode = 403),
+                11L to CatalogSite(loginRequired = false, configFailureCode = 500),
+            ),
+        )
+
+        val result = repository.getAvailableProfiles(session())
+
+        assertEquals(AppResult.Failure(AppError.Forbidden), result)
     }
 
     @Test
@@ -108,7 +144,7 @@ class DefaultSearchRepositoryTest {
         server.dispatcher = catalogDispatcher(
             mapOf(
                 11L to CatalogSite(loginRequired = true),
-                12L to CatalogSite(loginRequired = false, failConfig = true),
+                12L to CatalogSite(loginRequired = false, configFailureCode = 500),
             ),
         )
 
@@ -258,8 +294,8 @@ class DefaultSearchRepositoryTest {
                 ?: return MockResponse().setResponseCode(404)
             val site = sites[indexerId] ?: return MockResponse().setResponseCode(404)
             return when {
-                path.endsWith("/config") && site.failConfig ->
-                    MockResponse().setResponseCode(500)
+                path.endsWith("/config") && site.configFailureCode != null ->
+                    MockResponse().setResponseCode(site.configFailureCode)
 
                 path.endsWith("/config") -> jsonResponse(
                     """
@@ -304,7 +340,7 @@ class DefaultSearchRepositoryTest {
 private data class CatalogSite(
     val loginRequired: Boolean,
     val authName: String? = null,
-    val failConfig: Boolean = false,
+    val configFailureCode: Int? = null,
     val mediaType: String? = null,
     val videoType: String? = null,
 )
