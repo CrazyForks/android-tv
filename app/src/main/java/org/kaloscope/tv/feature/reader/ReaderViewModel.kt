@@ -40,6 +40,14 @@ class ReaderViewModel @Inject constructor(
         session: Session,
         chapterIndex: Int,
     ) {
+        val content = (uiState.value as? ReaderUiState.Active)?.content ?: return
+        // No-op selections must not cancel the current page or chapter request.
+        if (
+            chapterIndex !in content.chapters.indices ||
+            content.selectedChapterIndex == chapterIndex
+        ) {
+            return
+        }
         chapterJob?.cancel()
         pageJob?.cancel()
         chapterJob = viewModelScope.launch {
