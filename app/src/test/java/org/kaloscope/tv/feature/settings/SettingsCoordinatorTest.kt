@@ -328,6 +328,102 @@ class SettingsCoordinatorTest {
         assertTrue(state.connection is SettingsConnection.Success)
         assertEquals("http://127.0.0.1:8000", serverRepository.testedOrigin)
     }
+
+    @Test
+    fun `connection reset clears completed results and preserves other settings state`() = runTest {
+        for (result in listOf(AppResult.Success("0.1.0"), AppResult.Failure(AppError.Offline))) {
+            val coordinator = SettingsCoordinator(
+                FakeSettingsRepository(
+                    settings = TvSettings(accentColor = AccentColor.Green),
+                    saveResult = AppResult.Failure(AppError.InvalidData("settings_write")),
+                ),
+                FakeServerRepository(connectionResult = result),
+            )
+            coordinator.load()
+            coordinator.selectSection(SettingsSection.ServerAccount)
+            coordinator.setPlaybackMode(PlaybackMode.Direct)
+            coordinator.testConnection(session())
+            val before = coordinator.state.value as SettingsUiState.Content
+
+            coordinator.resetConnection()
+
+            assertEquals(
+                before.copy(connection = SettingsConnection.Idle),
+                coordinator.state.value,
+            )
+        }
+    }
+
+    @Test
+    fun `connection reset stays idle when an old request finishes`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val pending = CompletableDeferred<AppResult<String>>()
+        val coordinator = SettingsCoordinator(
+            FakeSettingsRepository(TvSettings()),
+            FakeServerRepository(
+                connectionBlock = {
+                    started.complete(Unit)
+                    pending.await()
+                },
+            ),
+        )
+        coordinator.load()
+        val oldJob = launch { coordinator.testConnection(session()) }
+        started.await()
+
+        coordinator.resetConnection()
+        pending.complete(AppResult.Success("old"))
+        oldJob.join()
+
+        assertEquals(
+            SettingsConnection.Idle,
+            (coordinator.state.value as SettingsUiState.Content).connection,
+        )
+    }
+
+    @Test
+    fun `connection reset discards late results after a new server test`() = runTest {
+        val firstSession = session()
+        val secondSession = firstSession.copy(
+            server = SavedServer("server-2", "Other server", "https://other.example"),
+        )
+        for (oldResult in listOf(AppResult.Success("old"), AppResult.Failure(AppError.Offline))) {
+            val started = CompletableDeferred<Unit>()
+            val pending = CompletableDeferred<AppResult<String>>()
+            val serverRepository = FakeServerRepository(
+                connectionBlock = { origin ->
+                    if (origin == firstSession.server.origin) {
+                        started.complete(Unit)
+                        pending.await()
+                    } else {
+                        AppResult.Success("new")
+                    }
+                },
+            )
+            val coordinator = SettingsCoordinator(
+                FakeSettingsRepository(TvSettings()),
+                serverRepository,
+            )
+            coordinator.load()
+            val oldJob = launch { coordinator.testConnection(firstSession) }
+            started.await()
+
+            coordinator.resetConnection()
+            assertEquals(
+                SettingsConnection.Idle,
+                (coordinator.state.value as SettingsUiState.Content).connection,
+            )
+            coordinator.testConnection(secondSession)
+            val current = coordinator.state.value as SettingsUiState.Content
+            assertEquals(SettingsConnection.Success("new"), current.connection)
+            assertEquals(secondSession.server.origin, serverRepository.testedOrigin)
+
+            pending.complete(oldResult)
+            oldJob.join()
+
+            assertEquals(current, coordinator.state.value)
+        }
+    }
 }
 
 private class FakeSettingsRepository(
@@ -347,17 +443,18 @@ private class FakeSettingsRepository(
 
 private class FakeServerRepository(
     private val connectionResult: AppResult<String> = AppResult.Success(""),
+    private val connectionBlock: (suspend (String) -> AppResult<String>)? = null,
 ) : ServerRepository {
     var testedOrigin: String? = null
 
     override suspend fun testConnection(origin: String): AppResult<ServerConnectionInfo> {
         testedOrigin = origin
-        return when (connectionResult) {
+        return when (val result = connectionBlock?.invoke(origin) ?: connectionResult) {
             is AppResult.Success -> AppResult.Success(
-                ServerConnectionInfo(origin = origin, version = connectionResult.value),
+                ServerConnectionInfo(origin = origin, version = result.value),
             )
 
-            is AppResult.Failure -> connectionResult
+            is AppResult.Failure -> result
         }
     }
 

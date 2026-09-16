@@ -65,6 +65,7 @@ class SettingsCoordinator(
     private val saveMutex = Mutex()
     private var lastSavedSettings: TvSettings? = null
     private var pendingSettings: TvSettings? = null
+    private var connectionGeneration = 0L
 
     val state: StateFlow<SettingsUiState> = mutableState.asStateFlow()
 
@@ -143,13 +144,22 @@ class SettingsCoordinator(
     suspend fun setTextReaderSettings(value: TextReaderSettings) =
         update { copy(textReader = ReaderSettingsPolicy.sanitize(value)) }
 
+    fun resetConnection() {
+        connectionGeneration += 1
+        updateContent { copy(connection = SettingsConnection.Idle) }
+    }
+
     suspend fun testConnection(session: Session) {
         val content = mutableState.value as? SettingsUiState.Content ?: return
         if (content.connection == SettingsConnection.Testing) {
             return
         }
+        val requestGeneration = ++connectionGeneration
         mutableState.value = content.copy(connection = SettingsConnection.Testing)
-        when (val result = serverRepository.testConnection(session.server.origin)) {
+        val result = serverRepository.testConnection(session.server.origin)
+        // A response from the previous server must not restore its connection status.
+        if (requestGeneration != connectionGeneration) return
+        when (result) {
             is AppResult.Success -> updateContent {
                 copy(connection = SettingsConnection.Success(result.value.version))
             }

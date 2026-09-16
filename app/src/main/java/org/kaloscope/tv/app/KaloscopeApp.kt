@@ -110,6 +110,7 @@ fun KaloscopeApp(
                         searchViewModel.reset()
                         libraryViewModel.reset()
                         detailViewModel.reset()
+                        settingsViewModel.resetConnection()
                         playerViewModel.clearServer(state.session.server.id)
                         readerViewModel.clearServer(state.session.server.id)
                     }

@@ -89,6 +89,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun resetConnection() {
+        connectionJob?.cancel()
+        connectionJob = null
+        coordinator.resetConnection()
+    }
+
     private fun enqueueSettingsUpdate(block: suspend () -> Unit) {
         // The coordinator serializes persistence; every input must still update its latest snapshot.
         viewModelScope.launch { block() }
