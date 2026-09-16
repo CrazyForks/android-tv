@@ -78,7 +78,9 @@ internal class PlayerSeekCoordinator(
     }
 
     fun release() {
-        if (mutableState.value.targetPositionMillis == null) {
+        val current = mutableState.value
+        // Boundary keys can release without changing the target already awaiting acknowledgement.
+        if (current.targetPositionMillis == null || current.seekPending) {
             return
         }
         submitJob?.cancel()

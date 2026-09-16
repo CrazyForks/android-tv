@@ -124,4 +124,64 @@ class PlayerSeekCoordinatorTest {
         assertEquals(60_000L, coordinator.state.value.displayPositionMillis)
         assertFalse(coordinator.state.value.seekPending)
     }
+
+    @Test
+    fun `boundary key releases do not resubmit a seek awaiting acknowledgement`() = runTest {
+        for ((offsetMillis, targetMillis) in listOf(-10_000L to 0L, 10_000L to 10_000L)) {
+            val submittedTargets = mutableListOf<Long>()
+            val coordinator = PlayerSeekCoordinator(
+                scope = this,
+                onSeek = submittedTargets::add,
+            )
+            coordinator.reportPlayerPosition(5_000L)
+            coordinator.adjustBy(durationMillis = 10_000L, offsetMillis = offsetMillis)
+            coordinator.release()
+            advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+            runCurrent()
+            assertEquals(listOf(targetMillis), submittedTargets)
+
+            assertFalse(
+                coordinator.adjustBy(durationMillis = 10_000L, offsetMillis = offsetMillis),
+            )
+            coordinator.release()
+            advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+            runCurrent()
+
+            assertEquals(listOf(targetMillis), submittedTargets)
+            assertEquals(targetMillis, coordinator.state.value.displayPositionMillis)
+            assertTrue(coordinator.state.value.seekPending)
+
+            coordinator.reportPlayerPosition(targetMillis)
+            assertFalse(coordinator.state.value.seekPending)
+        }
+    }
+
+    @Test
+    fun `a new target can replace a seek awaiting acknowledgement`() = runTest {
+        val submittedTargets = mutableListOf<Long>()
+        val coordinator = PlayerSeekCoordinator(
+            scope = this,
+            onSeek = submittedTargets::add,
+        )
+        coordinator.reportPlayerPosition(10_000L)
+        coordinator.stepBy(durationMillis = 60_000L, offsetMillis = 10_000L)
+        advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+        runCurrent()
+        assertEquals(listOf(20_000L), submittedTargets)
+        assertTrue(coordinator.state.value.seekPending)
+
+        assertTrue(coordinator.adjustBy(durationMillis = 60_000L, offsetMillis = -10_000L))
+        coordinator.reportPlayerPosition(20_500L)
+        assertEquals(10_000L, coordinator.state.value.displayPositionMillis)
+        coordinator.release()
+        advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+        runCurrent()
+
+        assertEquals(listOf(20_000L, 10_000L), submittedTargets)
+        assertTrue(coordinator.state.value.seekPending)
+
+        coordinator.reportPlayerPosition(10_500L)
+        assertEquals(10_500L, coordinator.state.value.displayPositionMillis)
+        assertFalse(coordinator.state.value.seekPending)
+    }
 }
