@@ -167,6 +167,97 @@ class ReaderCoordinatorTest {
     }
 
     @Test
+    fun `pagination waits for chapter replacement before loading its pages`() = runTest {
+        val pendingChapter = CompletableDeferred<AppResult<ReaderContent>>()
+        val pendingPage = CompletableDeferred<AppResult<ReaderImagePage>>()
+        val loader = FakeReaderContentLoader(
+            chapterResults = mutableMapOf(1 to pendingChapter),
+            pendingPageResult = pendingPage,
+        )
+        val coordinator = ReaderCoordinator(
+            ReaderRequestStore().apply { put(imageRequest(imageCount = 5)) },
+            loader,
+        )
+        coordinator.load("reader-1", session())
+        val chapterJob = launch { coordinator.selectChapter(session(), 1) }
+        runCurrent()
+        val pageJob = launch { coordinator.loadMoreImages(session()) }
+        runCurrent()
+
+        val replacement = chapterContent(1).copy(imageCount = 3)
+        pendingChapter.complete(AppResult.Success(replacement))
+        chapterJob.join()
+        pendingPage.complete(
+            AppResult.Success(
+                ReaderImagePage(
+                    images = listOf("next-page.jpg"),
+                    imageCount = 3,
+                    exhausted = false,
+                ),
+            ),
+        )
+        pageJob.join()
+
+        val replaced = coordinator.state.value as ReaderUiState.Image
+        assertEquals(replacement, replaced.content)
+        assertEquals(1L, replaced.contentRevision)
+        assertFalse(replaced.isChapterLoading)
+        assertFalse(replaced.isLoadingMore)
+        assertTrue(loader.pageRequests.isEmpty())
+
+        coordinator.loadMoreImages(session())
+
+        val paged = coordinator.state.value as ReaderUiState.Image
+        assertEquals(listOf(replacement), loader.pageRequests)
+        assertEquals(replacement.images + "next-page.jpg", paged.content.images)
+        assertFalse(paged.isLoadingMore)
+        assertNull(paged.pageError)
+    }
+
+    @Test
+    fun `pagination resumes on retained content after chapter failure`() = runTest {
+        val request = imageRequest()
+        val pendingChapter = CompletableDeferred<AppResult<ReaderContent>>()
+        val loader = FakeReaderContentLoader(
+            chapterResults = mutableMapOf(1 to pendingChapter),
+            pageResults = ArrayDeque(
+                listOf(
+                    AppResult.Success(
+                        ReaderImagePage(
+                            images = listOf("two.jpg"),
+                            imageCount = 3,
+                            exhausted = false,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val coordinator = ReaderCoordinator(ReaderRequestStore().apply { put(request) }, loader)
+        coordinator.load(request.requestId, session())
+        val chapterJob = launch { coordinator.selectChapter(session(), 1) }
+        runCurrent()
+
+        coordinator.loadMoreImages(session())
+        pendingChapter.complete(AppResult.Failure(AppError.Offline))
+        chapterJob.join()
+
+        val retained = coordinator.state.value as ReaderUiState.Image
+        assertEquals(request.content, retained.content)
+        assertEquals(0L, retained.contentRevision)
+        assertEquals(AppError.Offline, retained.chapterError)
+        assertFalse(retained.isChapterLoading)
+        assertTrue(loader.pageRequests.isEmpty())
+
+        coordinator.loadMoreImages(session())
+
+        val paged = coordinator.state.value as ReaderUiState.Image
+        assertEquals(listOf(request.content), loader.pageRequests)
+        assertEquals(listOf("one.jpg", "two.jpg"), paged.content.images)
+        assertFalse(paged.isLoadingMore)
+        assertNull(paged.pageError)
+    }
+
+    @Test
     fun `chapter failure clears pagination cancelled by source change`() = runTest {
         val pendingPage = CompletableDeferred<AppResult<ReaderImagePage>>()
         val store = ReaderRequestStore().apply { put(imageRequest(imageCount = 5)) }
@@ -228,6 +319,8 @@ private class FakeReaderContentLoader(
     private val pageResults: ArrayDeque<AppResult<ReaderImagePage>> = ArrayDeque(),
     private val pendingPageResult: CompletableDeferred<AppResult<ReaderImagePage>>? = null,
 ) : ReaderContentLoader {
+    val pageRequests = mutableListOf<ReaderImageContent>()
+
     override suspend fun resolveChapter(
         session: Session,
         content: ReaderContent,
@@ -237,7 +330,10 @@ private class FakeReaderContentLoader(
     override suspend fun loadImagePage(
         session: Session,
         content: ReaderImageContent,
-    ): AppResult<ReaderImagePage> = pendingPageResult?.await() ?: pageResults.removeFirst()
+    ): AppResult<ReaderImagePage> {
+        pageRequests += content
+        return pendingPageResult?.await() ?: pageResults.removeFirst()
+    }
 }
 
 private fun imageRequest(

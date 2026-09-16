@@ -130,7 +130,8 @@ class ReaderCoordinator(
 
     suspend fun loadMoreImages(session: Session) {
         val current = mutableState.value as? ReaderUiState.Image ?: return
-        if (current.isLoadingMore || current.imagesExhausted) return
+        // Displayed content still belongs to the old chapter while its replacement loads.
+        if (current.isChapterLoading || current.isLoadingMore || current.imagesExhausted) return
         val requestGeneration = generation.get()
         mutableState.value = current.copy(isLoadingMore = true, pageError = null)
         val result = try {
