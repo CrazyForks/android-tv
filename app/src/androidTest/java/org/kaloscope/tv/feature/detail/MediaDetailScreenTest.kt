@@ -1329,8 +1329,8 @@ class MediaDetailScreenTest {
     }
 
     @Test
-    fun focusedChildDetailKeepsSeriesPlotInHero() {
-        val parent = series().copy(plot = "整部剧的父级简介")
+    fun heroPlotFollowsSelectedEpisodeAndClearsWhileItsDetailLoads() {
+        val parent = twoEpisodeSeries().copy(plot = "整部剧的父级简介")
         val childDetail = parent.copy(
             id = 301,
             title = "启程",
@@ -1340,19 +1340,24 @@ class MediaDetailScreenTest {
             episode = 1,
             children = emptyList(),
         )
+        var state by mutableStateOf(
+            MediaDetailUiState.Content(
+                parent = parent,
+                focusedChildId = 301,
+                focusedChildDetail = childDetail,
+            ),
+        )
         composeRule.setContent {
             KaloscopeTheme {
                 MediaDetailScreen(
                     session = session(),
-                    state = MediaDetailUiState.Content(
-                        parent = parent,
-                        focusedChildId = 301,
-                        focusedChildDetail = childDetail,
-                    ),
+                    state = state,
                     resumePositionsByMediaId = emptyMap(),
                     onBack = {},
                     onRetry = {},
-                    onChildFocused = {},
+                    onChildFocused = { childId ->
+                        state = state.copy(focusedChildId = childId)
+                    },
                     onChildViewportChanged = {},
                     onPlayParent = { _, _ -> },
                     onPlayChild = { _, _ -> },
@@ -1360,8 +1365,53 @@ class MediaDetailScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("整部剧的父级简介").assertExists()
+        composeRule.onNodeWithText("整部剧的父级简介").assertDoesNotExist()
+        composeRule.onNodeWithText("第一集独有的分集简介").assertExists()
+
+        composeRule.onNodeWithTag("media-child-card-301")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionRight) }
+
+        composeRule.onNodeWithTag("media-child-card-302").assertIsFocused()
+        composeRule.onNodeWithText("整部剧的父级简介").assertDoesNotExist()
         composeRule.onNodeWithText("第一集独有的分集简介").assertDoesNotExist()
+
+        composeRule.runOnIdle {
+            state = state.copy(
+                focusedChildDetail = childDetail.copy(
+                    id = 302,
+                    title = "返程",
+                    path = "/media/episode-2.mkv",
+                    episode = 2,
+                    plot = "第二集独有的分集简介",
+                ),
+            )
+        }
+
+        composeRule.onNodeWithText("第二集独有的分集简介").assertExists()
+        composeRule.onNodeWithText("整部剧的父级简介").assertDoesNotExist()
+        composeRule.onNodeWithText("第一集独有的分集简介").assertDoesNotExist()
+    }
+
+    @Test
+    fun seriesPlotRemainsAccessibleWithoutEpisodePlotOrGenres() {
+        setStatefulDetailContent(
+            initialState = MediaDetailUiState.Content(
+                parent = series().copy(
+                    plot = "整部剧的父级简介",
+                    genres = emptyList(),
+                ),
+            ),
+        )
+
+        composeRule.onNodeWithText("整部剧的父级简介").assertDoesNotExist()
+        composeRule.onNodeWithTag("detail-more-info-action")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+
+        composeRule.onNodeWithTag("detail-more-info-series-plot")
+            .assertTextContains("整部剧的父级简介")
+        composeRule.onNodeWithTag("detail-more-info-episode-plot").assertDoesNotExist()
     }
 
     @Test
@@ -1478,8 +1528,8 @@ class MediaDetailScreenTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText(parentPlot).assertExists()
-        composeRule.onNodeWithText("第一集简介").assertDoesNotExist()
+        composeRule.onNodeWithText(parentPlot).assertDoesNotExist()
+        composeRule.onNodeWithText("第一集简介").assertExists()
         val updatedPosterTop = composeRule.onNodeWithTag("detail-parent-poster-201")
             .fetchSemanticsNode().boundsInRoot.top
         val updatedCarouselOffset = composeRule.onNodeWithTag("detail-child-carousel")
@@ -1497,8 +1547,17 @@ class MediaDetailScreenTest {
         val plot = "简介第一行\n简介第二行\n简介第三行\n简介第四行"
         val parent = series().copy(
             title = "一段足够长以便在电视详情页面换成两行显示的媒体标题",
-            plot = plot,
+            plot = "整部剧的父级简介",
             genres = listOf("剧情", "科幻", "冒险", "悬疑", "太空"),
+        )
+        val childDetail = parent.copy(
+            id = 301,
+            title = "启程",
+            path = "/media/episode-1.mkv",
+            plot = plot,
+            season = 1,
+            episode = 1,
+            children = emptyList(),
         )
         composeRule.setContent {
             KaloscopeTheme {
@@ -1509,7 +1568,11 @@ class MediaDetailScreenTest {
                 ) {
                     MediaDetailScreen(
                         session = session(),
-                        state = MediaDetailUiState.Content(parent = parent),
+                        state = MediaDetailUiState.Content(
+                            parent = parent,
+                            focusedChildId = 301,
+                            focusedChildDetail = childDetail,
+                        ),
                         resumePositionsByMediaId = emptyMap(),
                         onBack = {},
                         onRetry = {},

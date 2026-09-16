@@ -2,6 +2,7 @@ package org.kaloscope.tv.feature.detail
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -24,7 +25,7 @@ import org.kaloscope.tv.test.StubMediaRepository
 @OptIn(ExperimentalCoroutinesApi::class)
 class MediaDetailViewModelTest {
     @Test
-    fun `rapid focus changes load only the settled child detail`() = runTest {
+    fun `selected episode detail loads without a debounce delay`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val repository = DetailViewModelFakeRepository(detailFixtures())
         val viewModel = MediaDetailViewModel(repository)
@@ -32,11 +33,18 @@ class MediaDetailViewModelTest {
             viewModel.load(session(), 201)
             runCurrent()
 
-            viewModel.rememberFocusedChild(301)
-            viewModel.rememberFocusedChild(302)
-            advanceUntilIdle()
+            val initialContent = viewModel.uiState.value as MediaDetailUiState.Content
+            assertEquals("第一集简介", initialContent.focusedChildDetail?.plot)
+            assertEquals(listOf(201L, 301L, 302L), repository.detailCalls)
 
-            assertEquals(listOf(201L, 302L), repository.detailCalls)
+            viewModel.rememberFocusedChild(302)
+
+            val selectedContent = viewModel.uiState.value as MediaDetailUiState.Content
+            assertEquals("第二集简介", selectedContent.focusedChildDetail?.plot)
+            runCurrent()
+
+            assertEquals(0L, testScheduler.currentTime)
+            assertEquals(listOf(201L, 301L, 302L, 303L), repository.detailCalls)
         } finally {
             viewModel.reset()
             Dispatchers.resetMain()
@@ -60,7 +68,7 @@ class MediaDetailViewModelTest {
             viewModel.rememberFocusedChild(301)
             advanceUntilIdle()
 
-            assertEquals(listOf(201L, 301L, 302L), repository.detailCalls)
+            assertEquals(listOf(201L, 301L, 302L, 303L), repository.detailCalls)
         } finally {
             viewModel.reset()
             Dispatchers.resetMain()
@@ -87,6 +95,114 @@ class MediaDetailViewModelTest {
             Dispatchers.resetMain()
         }
     }
+
+    @Test
+    fun `leaving during initial episode loading cancels the request without showing content`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val parent = detailFixtures().getValue(201L)
+        val calls = mutableListOf<Long>()
+        var childCancelled = false
+        val repository = object : StubMediaRepository() {
+            override suspend fun getMediaDetail(session: Session, mediaId: Long): AppResult<MediaDetail> {
+                calls += mediaId
+                if (mediaId == parent.id) return AppResult.Success(parent)
+                try {
+                    awaitCancellation()
+                } finally {
+                    childCancelled = true
+                }
+            }
+        }
+        val viewModel = MediaDetailViewModel(repository)
+        try {
+            viewModel.load(session(), 201)
+            runCurrent()
+
+            assertEquals(MediaDetailUiState.Loading, viewModel.uiState.value)
+            assertEquals(listOf(201L, 301L), calls)
+            viewModel.reset()
+            runCurrent()
+
+            assertEquals(true, childCancelled)
+            assertEquals(MediaDetailUiState.Loading, viewModel.uiState.value)
+            assertEquals(listOf(201L, 301L), calls)
+        } finally {
+            viewModel.reset()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `new selection cancels a slow neighbor request and takes priority`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val details = detailFixtures()
+        val calls = mutableListOf<Long>()
+        var cancelledNeighbors = 0
+        val repository = object : StubMediaRepository() {
+            override suspend fun getMediaDetail(session: Session, mediaId: Long): AppResult<MediaDetail> {
+                calls += mediaId
+                if (mediaId == 302L) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        cancelledNeighbors += 1
+                    }
+                }
+                return AppResult.Success(details.getValue(mediaId))
+            }
+        }
+        val viewModel = MediaDetailViewModel(repository)
+        try {
+            viewModel.load(session(), 201)
+            runCurrent()
+            viewModel.rememberFocusedChild(301)
+            runCurrent()
+
+            assertEquals(listOf(201L, 301L, 302L), calls)
+            assertEquals(0, cancelledNeighbors)
+
+            viewModel.rememberFocusedChild(303)
+            runCurrent()
+
+            val content = viewModel.uiState.value as MediaDetailUiState.Content
+            assertEquals("第三集简介", content.focusedChildDetail?.plot)
+            assertEquals(listOf(201L, 301L, 302L, 303L, 302L), calls)
+            assertEquals(1, cancelledNeighbors)
+
+            viewModel.reset()
+            runCurrent()
+            assertEquals(2, cancelledNeighbors)
+            assertEquals(MediaDetailUiState.Loading, viewModel.uiState.value)
+        } finally {
+            viewModel.reset()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun `changing servers reloads matching media ids instead of reusing cached episodes`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val repository = DetailViewModelFakeRepository(detailFixtures())
+        val viewModel = MediaDetailViewModel(repository)
+        try {
+            val firstSession = session()
+            viewModel.load(firstSession, 201)
+            runCurrent()
+
+            viewModel.load(
+                firstSession.copy(
+                    server = SavedServer("second-server", "Second server", "http://127.0.0.1:8001"),
+                ),
+                201,
+            )
+            runCurrent()
+
+            assertEquals(listOf(201L, 301L, 302L, 201L, 301L, 302L), repository.detailCalls)
+        } finally {
+            viewModel.reset()
+            Dispatchers.resetMain()
+        }
+    }
 }
 
 private class DetailViewModelFakeRepository(
@@ -108,10 +224,12 @@ private class DetailViewModelFakeRepository(
 private fun detailFixtures(): Map<Long, MediaDetail> {
     val first = childSummary(301, "启程")
     val second = childSummary(302, "返程")
+    val third = childSummary(303, "回声")
     return mapOf(
-        201L to detail(201, "群星档案", "整部剧简介", children = listOf(first, second)),
+        201L to detail(201, "群星档案", "整部剧简介", children = listOf(first, second, third)),
         301L to detail(301, "启程", "第一集简介"),
         302L to detail(302, "返程", "第二集简介"),
+        303L to detail(303, "回声", "第三集简介"),
     )
 }
 

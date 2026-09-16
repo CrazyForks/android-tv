@@ -20,6 +20,21 @@ internal fun resolveDetailBackdrop(
     parent.posterPath,
 ).firstOrNull { !it.isNullOrBlank() }
 
+internal fun resolveDetailPlot(
+    parent: MediaDetail,
+    focusedChildDetail: MediaDetail?,
+): String? {
+    val childPlot = focusedChildDetail?.plot?.takeIf(String::isNotBlank)
+    return if (
+        childSectionKind(parent) == MediaChildSectionKind.Episodes &&
+        parent.children.isNotEmpty()
+    ) {
+        childPlot
+    } else {
+        childPlot ?: parent.plot?.takeIf(String::isNotBlank)
+    }
+}
+
 internal fun childSectionKind(parent: MediaDetail): MediaChildSectionKind =
     if (parent.library?.type == MediaLibraryType.TvShow) {
         MediaChildSectionKind.Episodes

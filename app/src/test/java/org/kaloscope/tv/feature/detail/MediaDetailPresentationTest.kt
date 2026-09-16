@@ -1,6 +1,7 @@
 package org.kaloscope.tv.feature.detail
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.kaloscope.tv.core.model.MediaDetail
 import org.kaloscope.tv.core.model.MediaLibrary
@@ -8,6 +9,51 @@ import org.kaloscope.tv.core.model.MediaLibraryType
 import org.kaloscope.tv.core.model.MediaSummary
 
 class MediaDetailPresentationTest {
+    @Test
+    fun `series hero shows the selected episode plot`() {
+        val parent = detail(MediaLibraryType.TvShow).copy(
+            children = listOf(child(id = 301, title = "Episode 1")),
+        )
+        val episode = parent.copy(id = 301, plot = "Episode plot", children = emptyList())
+
+        assertEquals("Episode plot", resolveDetailPlot(parent, episode))
+    }
+
+    @Test
+    fun `series hero never substitutes series plot for missing episode plot`() {
+        val parent = detail(MediaLibraryType.TvShow).copy(
+            children = listOf(child(id = 301, title = "Episode 1")),
+        )
+
+        assertNull(resolveDetailPlot(parent, null))
+        listOf(null, "", " \n ").forEach { plot ->
+            val episode = parent.copy(id = 301, plot = plot, children = emptyList())
+            assertNull(resolveDetailPlot(parent, episode))
+        }
+    }
+
+    @Test
+    fun `standalone movie and episode show their own plot`() {
+        listOf(MediaLibraryType.Movie, MediaLibraryType.TvShow).forEach { type ->
+            val parent = detail(type)
+
+            assertEquals("Fixture plot", resolveDetailPlot(parent, null))
+            assertNull(resolveDetailPlot(parent.copy(plot = " "), null))
+        }
+    }
+
+    @Test
+    fun `movie parts retain child plot with parent fallback`() {
+        val parent = detail(MediaLibraryType.Movie).copy(
+            children = listOf(child(id = 301, title = "Part 1")),
+        )
+        val part = parent.copy(id = 301, plot = "Part plot", children = emptyList())
+
+        assertEquals("Part plot", resolveDetailPlot(parent, part))
+        assertEquals("Fixture plot", resolveDetailPlot(parent, null))
+        assertEquals("Fixture plot", resolveDetailPlot(parent, part.copy(plot = " ")))
+    }
+
     @Test
     fun `focused child artwork follows WebUI fallback order`() {
         val parent = detail(

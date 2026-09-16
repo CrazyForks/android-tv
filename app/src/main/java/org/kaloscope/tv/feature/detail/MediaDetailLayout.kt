@@ -123,11 +123,7 @@ internal fun MediaDetailCinematicLayout(
     val focusedChildPlot = focusedChildDetail
         ?.plot
         ?.takeIf(String::isNotBlank)
-    val displayedPlot = if (sectionKind == MediaChildSectionKind.Episodes) {
-        parentPlot ?: focusedChildPlot
-    } else {
-        focusedChildPlot ?: parentPlot
-    }
+    val displayedPlot = resolveDetailPlot(parent, focusedChildDetail)
 
     fun dismissMoreInfo() {
         moreInfoOpen = false
@@ -468,7 +464,8 @@ private fun DetailHero(
                 DetailPlaybackActions(
                     resumePositionSeconds = resumePositionSeconds,
                     primaryActionFocusRequester = primaryActionFocusRequester,
-                    moreInfoAvailable = !plot.isNullOrBlank() || parent.genres.isNotEmpty(),
+                    moreInfoAvailable = !plot.isNullOrBlank() ||
+                        !parent.plot.isNullOrBlank() || parent.genres.isNotEmpty(),
                     moreInfoFocusRequester = moreInfoFocusRequester,
                     onNavigateUp = onNavigateUp,
                     onNavigateDown = onNavigateDown,

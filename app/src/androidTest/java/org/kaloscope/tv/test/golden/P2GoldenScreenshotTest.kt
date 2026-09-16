@@ -307,11 +307,25 @@ class P2GoldenScreenshotTest {
         val width = Resources.getSystem().displayMetrics.widthPixels
         if (width !in setOf(1280, 1920)) return
         composeRule.mainClock.autoAdvance = false
+        val parent = goldenSeries()
+        val episode = parent.children.first()
         composeRule.setContent {
             KaloscopeTheme {
                 MediaDetailScreen(
                     session = session(),
-                    state = MediaDetailUiState.Content(parent = goldenSeries()),
+                    state = MediaDetailUiState.Content(
+                        parent = parent,
+                        focusedChildId = episode.id,
+                        focusedChildDetail = parent.copy(
+                            id = episode.id,
+                            title = episode.title,
+                            path = episode.path,
+                            season = episode.season,
+                            episode = episode.episode,
+                            plot = "档案员沿着被遗忘的航线，重建一段跨越数代人的星海记忆。",
+                            children = emptyList(),
+                        ),
+                    ),
                     resumePositionsByMediaId = mapOf(301L to 42L),
                     onBack = {},
                     onRetry = {},
@@ -850,7 +864,7 @@ private fun goldenSeries() = MediaDetail(
     season = null,
     episode = null,
     aired = "2026-01-02",
-    plot = "档案员沿着被遗忘的航线，重建一段跨越数代人的星海记忆。",
+    plot = "一部关于星海档案员追寻历史的剧集。",
     genres = listOf("科幻", "剧情"),
     directors = listOf("沈霁"),
     writers = listOf("闻川"),

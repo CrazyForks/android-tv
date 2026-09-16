@@ -1,5 +1,7 @@
 package org.kaloscope.tv.feature.detail
 
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,12 +32,14 @@ class MediaDetailCoordinator(
     private val repository: MediaRepository,
 ) {
     private val childDetailCache = mutableMapOf<Long, MediaDetail>()
+    private var generation = 0L
     private val mutableState =
         MutableStateFlow<MediaDetailUiState>(MediaDetailUiState.Loading)
 
     val state: StateFlow<MediaDetailUiState> = mutableState.asStateFlow()
 
     fun reset() {
+        generation += 1
         childDetailCache.clear()
         mutableState.value = MediaDetailUiState.Loading
     }
@@ -44,20 +48,37 @@ class MediaDetailCoordinator(
         session: Session,
         mediaId: Long,
     ) {
+        generation += 1
+        val requestGeneration = generation
         childDetailCache.clear()
         mutableState.value = MediaDetailUiState.Loading
-        mutableState.value = when (val result = repository.getMediaDetail(session, mediaId)) {
-            is AppResult.Success -> MediaDetailUiState.Content(
-                parent = result.value,
-                focusedChildId = result.value.children.firstOrNull()?.id,
-            )
-            is AppResult.Failure -> MediaDetailUiState.Error(result.error)
+        val result = repository.getMediaDetail(session, mediaId)
+        currentCoroutineContext().ensureActive()
+        if (requestGeneration != generation) return
+        val parent = when (result) {
+            is AppResult.Success -> result.value
+            is AppResult.Failure -> {
+                mutableState.value = MediaDetailUiState.Error(result.error)
+                return
+            }
+        }
+        val focusedChildId = parent.children.firstOrNull()?.id
+        val childResult = focusedChildId?.let { requestChildDetail(session, it) }
+        if (requestGeneration != generation) return
+        val content = MediaDetailUiState.Content(parent = parent, focusedChildId = focusedChildId)
+        mutableState.value = when (childResult) {
+            is AppResult.Success -> {
+                childDetailCache[childResult.value.id] = childResult.value
+                content.copy(focusedChildDetail = childResult.value)
+            }
+            is AppResult.Failure -> content.copy(childDetailError = childResult.error)
+            null -> content
         }
     }
 
-    fun rememberFocusedChild(childId: Long): Boolean {
-        val content = mutableState.value as? MediaDetailUiState.Content ?: return false
-        if (content.parent.children.none { it.id == childId }) return false
+    fun rememberFocusedChild(childId: Long) {
+        val content = mutableState.value as? MediaDetailUiState.Content ?: return
+        if (content.parent.children.none { it.id == childId }) return
 
         val cachedDetail = childDetailCache[childId]
         mutableState.value = content.copy(
@@ -65,21 +86,41 @@ class MediaDetailCoordinator(
             focusedChildDetail = cachedDetail,
             childDetailError = null,
         )
-        return cachedDetail == null
     }
 
-    suspend fun loadFocusedChild(
+    suspend fun loadFocusedChildAndNeighbors(
         session: Session,
         childId: Long,
     ) {
         val content = mutableState.value as? MediaDetailUiState.Content ?: return
-        if (
-            content.focusedChildId != childId ||
-            content.parent.children.none { it.id == childId }
-        ) {
-            return
+        val focusedIndex = content.parent.children.indexOfFirst { it.id == childId }
+        if (focusedIndex < 0 || content.focusedChildId != childId) return
+        val requestGeneration = generation
+
+        // Prefetch only adjacent episodes, and always load the selection first.
+        for (index in listOf(focusedIndex, focusedIndex + 1, focusedIndex - 1)) {
+            val current = mutableState.value as? MediaDetailUiState.Content ?: return
+            if (
+                requestGeneration != generation ||
+                current.focusedChildId != childId ||
+                current.childDetailError == AppError.Unauthorized
+            ) {
+                return
+            }
+            if (index == focusedIndex && current.childDetailError != null) continue
+            val child = content.parent.children.getOrNull(index) ?: continue
+            loadChildDetail(session, child.id)
         }
+    }
+
+    private suspend fun loadChildDetail(
+        session: Session,
+        childId: Long,
+    ) {
+        val content = mutableState.value as? MediaDetailUiState.Content ?: return
+        if (content.parent.children.none { it.id == childId }) return
         val parentId = content.parent.id
+        val requestGeneration = generation
         childDetailCache[childId]?.let { cachedDetail ->
             publishChildResult(parentId, childId) { current ->
                 current.copy(
@@ -90,16 +131,10 @@ class MediaDetailCoordinator(
             return
         }
 
-        when (val result = repository.getMediaDetail(session, childId)) {
+        val result = requestChildDetail(session, childId)
+        if (requestGeneration != generation) return
+        when (result) {
             is AppResult.Success -> {
-                if (result.value.id != childId) {
-                    publishChildFailure(
-                        parentId = parentId,
-                        childId = childId,
-                        error = AppError.InvalidData("media child detail"),
-                    )
-                    return
-                }
                 val current = mutableState.value as? MediaDetailUiState.Content ?: return
                 if (
                     current.parent.id != parentId ||
@@ -121,6 +156,19 @@ class MediaDetailCoordinator(
                 childId = childId,
                 error = result.error,
             )
+        }
+    }
+
+    private suspend fun requestChildDetail(
+        session: Session,
+        childId: Long,
+    ): AppResult<MediaDetail> {
+        val result = repository.getMediaDetail(session, childId)
+        currentCoroutineContext().ensureActive()
+        return if (result is AppResult.Success && result.value.id != childId) {
+            AppResult.Failure(AppError.InvalidData("media child detail"))
+        } else {
+            result
         }
     }
 
@@ -147,11 +195,15 @@ class MediaDetailCoordinator(
         childId: Long,
         error: AppError,
     ) {
-        publishChildResult(parentId, childId) { current ->
-            current.copy(
+        val current = mutableState.value as? MediaDetailUiState.Content ?: return
+        if (current.parent.id != parentId) return
+        if (current.focusedChildId == childId) {
+            mutableState.value = current.copy(
                 focusedChildDetail = null,
                 childDetailError = error,
             )
+        } else if (error == AppError.Unauthorized) {
+            mutableState.value = current.copy(childDetailError = error)
         }
     }
 }

@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.kaloscope.tv.core.model.GridViewportSnapshot
@@ -29,7 +28,7 @@ class MediaDetailViewModel @Inject constructor(
         mediaId: Long,
         force: Boolean = false,
     ) {
-        if (!force && currentMediaId == mediaId) {
+        if (!force && currentMediaId == mediaId && currentSession == session) {
             return
         }
         currentMediaId = mediaId
@@ -38,12 +37,12 @@ class MediaDetailViewModel @Inject constructor(
     }
 
     fun rememberFocusedChild(childId: Long) {
-        val detailLoadRequired = coordinator.rememberFocusedChild(childId)
-        childDetailJob?.cancel()
-        childDetailJob = null
-        if (detailLoadRequired) {
-            currentSession?.let { session -> scheduleChildDetailLoad(session, childId) }
-        }
+        val content = coordinator.state.value as? MediaDetailUiState.Content ?: return
+        if (content.parent.children.none { it.id == childId }) return
+        if (content.focusedChildId == childId && childDetailJob?.isActive == true) return
+
+        coordinator.rememberFocusedChild(childId)
+        currentSession?.let { session -> scheduleChildDetailLoad(session, childId) }
     }
 
     fun rememberChildViewport(snapshot: GridViewportSnapshot) =
@@ -87,10 +86,7 @@ class MediaDetailViewModel @Inject constructor(
     ) {
         childDetailJob?.cancel()
         childDetailJob = viewModelScope.launch {
-            delay(ChildDetailFocusDebounceMillis)
-            coordinator.loadFocusedChild(session, childId)
+            coordinator.loadFocusedChildAndNeighbors(session, childId)
         }
     }
 }
-
-internal const val ChildDetailFocusDebounceMillis = 180L
