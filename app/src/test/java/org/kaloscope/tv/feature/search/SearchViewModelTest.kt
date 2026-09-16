@@ -1,0 +1,217 @@
+package org.kaloscope.tv.feature.search
+
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.kaloscope.tv.core.common.AppResult
+import org.kaloscope.tv.core.model.IndexerSourceProfile
+import org.kaloscope.tv.core.model.NetworkIndexer
+import org.kaloscope.tv.core.model.NetworkPlaybackSource
+import org.kaloscope.tv.core.model.NetworkSearchPage
+import org.kaloscope.tv.core.model.NetworkSearchResult
+import org.kaloscope.tv.core.model.ReaderContent
+import org.kaloscope.tv.core.model.ReaderImageContent
+import org.kaloscope.tv.core.model.ReaderImagePage
+import org.kaloscope.tv.core.model.ResolvedNetworkResource
+import org.kaloscope.tv.core.model.SavedServer
+import org.kaloscope.tv.core.model.SearchFilterValue
+import org.kaloscope.tv.core.model.Session
+import org.kaloscope.tv.core.model.SessionUser
+import org.kaloscope.tv.core.player.PlaybackRequestStore
+import org.kaloscope.tv.core.player.TranscodeResolution
+import org.kaloscope.tv.core.reader.ReaderRequestStore
+import org.kaloscope.tv.data.search.NetworkResourceRepository
+import org.kaloscope.tv.data.search.SearchRepository
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class SearchViewModelTest {
+    private val dispatcher = StandardTestDispatcher()
+    private lateinit var repository: PendingSearchRepository
+    private lateinit var viewModel: SearchViewModel
+
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(dispatcher)
+        repository = PendingSearchRepository()
+        viewModel = SearchViewModel(
+            repository = repository,
+            requestStore = PlaybackRequestStore(),
+            networkResourceRepository = UnusedNetworkResourceRepository,
+            readerRequestStore = ReaderRequestStore(),
+        )
+    }
+
+    @After
+    fun tearDown() {
+        viewModel.reset()
+        dispatcher.scheduler.runCurrent()
+        Dispatchers.resetMain()
+    }
+
+    @Test
+    fun `reselecting current indexer preserves pending first page`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+
+        viewModel.selectIndexer(session(), 11)
+        runCurrent()
+
+        val request = repository.requests.single()
+        assertFalse("Selecting the current indexer must keep its request active", request.cancelled)
+        request.result.complete(AppResult.Success(page("v1")))
+        runCurrent()
+
+        val content = viewModel.uiState.value as SearchUiState.Content
+        assertEquals(listOf("v1"), content.results.items.map { it.id })
+    }
+
+    @Test
+    fun `reselecting current indexer preserves pending next page`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page("v1", hasNext = true)))
+        runCurrent()
+        viewModel.loadNext(session())
+        runCurrent()
+
+        viewModel.selectIndexer(session(), 11)
+        runCurrent()
+
+        assertEquals(listOf(1, 2), repository.requests.map { it.pageNumber })
+        val request = repository.requests.last()
+        assertFalse("Selecting the current indexer must keep pagination active", request.cancelled)
+        request.result.complete(AppResult.Success(page("v2", pageNumber = 2)))
+        runCurrent()
+
+        val content = viewModel.uiState.value as SearchUiState.Content
+        val results = content.results as SearchResultsState.Content
+        assertEquals(listOf("v1", "v2"), results.items.map { it.id })
+        assertFalse(results.isLoadingMore)
+    }
+
+    @Test
+    fun `selecting another indexer cancels the pending request`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        val previousRequest = repository.requests.single()
+
+        viewModel.selectIndexer(session(), 12)
+        runCurrent()
+
+        assertTrue(previousRequest.cancelled)
+        assertEquals(listOf(11L, 12L), repository.requests.map { it.indexerId })
+        repository.requests.last().result.complete(AppResult.Success(page("other")))
+        runCurrent()
+        previousRequest.result.complete(AppResult.Success(page("v1")))
+        runCurrent()
+
+        val content = viewModel.uiState.value as SearchUiState.Content
+        assertEquals(12L, content.selectedIndexerId)
+        assertEquals(listOf("other"), content.results.items.map { it.id })
+    }
+}
+
+private class PendingSearchRepository : SearchRepository {
+    val requests = mutableListOf<PendingSearchPage>()
+
+    override suspend fun getAvailableProfiles(
+        session: Session,
+    ): AppResult<List<IndexerSourceProfile>> = AppResult.Success(
+        listOf(11L, 12L).map { id ->
+            IndexerSourceProfile(
+                indexer = NetworkIndexer(id, "站点 $id", null),
+                pageSize = 20,
+                keywordRequired = false,
+            )
+        },
+    )
+
+    override suspend fun search(
+        session: Session,
+        profile: IndexerSourceProfile,
+        keyword: String,
+        filters: Map<String, SearchFilterValue>,
+        pageNumber: Int,
+    ): AppResult<NetworkSearchPage> {
+        val request = PendingSearchPage(profile.indexer.id, pageNumber)
+        requests += request
+        return try {
+            request.result.await()
+        } catch (error: CancellationException) {
+            request.cancelled = true
+            throw error
+        }
+    }
+}
+
+private class PendingSearchPage(val indexerId: Long, val pageNumber: Int) {
+    val result = CompletableDeferred<AppResult<NetworkSearchPage>>()
+    var cancelled = false
+}
+
+private object UnusedNetworkResourceRepository : NetworkResourceRepository {
+    override suspend fun resolveResource(
+        session: Session,
+        indexerId: Long,
+        result: NetworkSearchResult,
+        preferredDefinition: TranscodeResolution,
+    ): AppResult<ResolvedNetworkResource> = error("Unexpected resource resolution")
+
+    override suspend fun resolveVideoChapter(
+        session: Session,
+        source: NetworkPlaybackSource,
+        chapterIndex: Int,
+        preferredDefinition: TranscodeResolution,
+    ): AppResult<NetworkPlaybackSource> = error("Unexpected video chapter resolution")
+
+    override suspend fun resolveReaderChapter(
+        session: Session,
+        content: ReaderContent,
+        chapterIndex: Int,
+    ): AppResult<ReaderContent> = error("Unexpected reader chapter resolution")
+
+    override suspend fun loadImagePage(
+        session: Session,
+        content: ReaderImageContent,
+    ): AppResult<ReaderImagePage> = error("Unexpected image page request")
+}
+
+private fun page(
+    resultId: String,
+    pageNumber: Int = 1,
+    hasNext: Boolean = false,
+) = NetworkSearchPage(
+    items = listOf(
+        NetworkSearchResult(
+            id = resultId,
+            title = "视频 $resultId",
+            coverPath = null,
+            rating = null,
+            category = null,
+            uploader = null,
+            uploadedAt = null,
+        ),
+    ),
+    total = if (hasNext || pageNumber > 1) 21 else 1,
+    pageNumber = pageNumber,
+    pageSize = 20,
+    hasNext = hasNext,
+)
+
+private fun session() = Session(
+    server = SavedServer("server-id", "Test server", "https://server.example"),
+    token = "fixture-token",
+    user = SessionUser(1, "tv", "user"),
+)
