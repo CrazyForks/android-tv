@@ -53,6 +53,7 @@ import org.kaloscope.tv.core.player.PlaybackFeedbackPolicy
 import org.kaloscope.tv.core.player.PlaybackPreparationStage
 import org.kaloscope.tv.core.player.PlaybackRequest
 import org.kaloscope.tv.core.player.PlaybackRequestNavigator
+import org.kaloscope.tv.core.player.PlaybackResumeState
 import org.kaloscope.tv.core.player.PlaybackSettingsPolicy
 import org.kaloscope.tv.core.player.ProgressReason
 
@@ -141,6 +142,17 @@ private fun PlayerContent(
     var activeController by remember(playbackIdentity) {
         mutableStateOf<PlaybackController?>(null)
     }
+    var resumeState by remember(playbackIdentity) {
+        mutableStateOf<PlaybackResumeState?>(null)
+    }
+    fun releaseController() {
+        activeController?.let { controller ->
+            // Keep transient playback state before releasing the lifecycle-scoped player.
+            resumeState = controller.captureResumeState()
+            controller.release()
+        }
+        activeController = null
+    }
     // API 23 may skip onStop, while newer Android versions support multi-window playback.
     if (android.os.Build.VERSION.SDK_INT > 23) {
         LifecycleStartEffect(playbackIdentity) {
@@ -149,11 +161,11 @@ private fun PlayerContent(
                 request = state.request,
                 subtitles = state.subtitles,
                 probeDurationMillis = state.mediaProbe?.durationMillis ?: 0L,
+                resumeState = resumeState,
                 onProgress = onProgress,
             )
             onStopOrDispose {
-                activeController?.release()
-                activeController = null
+                releaseController()
             }
         }
     } else {
@@ -163,11 +175,11 @@ private fun PlayerContent(
                 request = state.request,
                 subtitles = state.subtitles,
                 probeDurationMillis = state.mediaProbe?.durationMillis ?: 0L,
+                resumeState = resumeState,
                 onProgress = onProgress,
             )
             onPauseOrDispose {
-                activeController?.release()
-                activeController = null
+                releaseController()
             }
         }
     }

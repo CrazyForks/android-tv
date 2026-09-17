@@ -32,6 +32,11 @@ import org.kaloscope.tv.core.model.Session
 import org.kaloscope.tv.core.model.SubtitleTrack
 import org.kaloscope.tv.core.network.authorizationHeader
 
+data class PlaybackResumeState(
+    val positionMillis: Long,
+    val playWhenReady: Boolean,
+)
+
 data class PlaybackStatus(
     val isPlaying: Boolean = false,
     val playWhenReady: Boolean = false,
@@ -53,6 +58,7 @@ class PlaybackController internal constructor(
     private val request: PlaybackRequest,
     private val subtitles: List<SubtitleTrack>,
     private val probeDurationMillis: Long,
+    resumeState: PlaybackResumeState?,
     private val onProgress: (PlaybackRequest, Long, Long, ProgressReason) -> Unit,
 ) {
     private var sourceKind = when (request) {
@@ -174,7 +180,12 @@ class PlaybackController internal constructor(
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, selectedSubtitleTrackId == null)
             .build()
         subtitleClock.setOffsetSeconds(request.subtitleSettings.timeOffsetSeconds)
-        startSource(sourceKind, request.resumePositionMillis())
+        startSource(
+            target = sourceKind,
+            positionMillis = resumeState?.positionMillis?.coerceAtLeast(0)
+                ?: request.resumePositionMillis(),
+            playWhenReady = resumeState?.playWhenReady ?: true,
+        )
     }
 
     fun togglePlayPause(): Boolean {
@@ -257,6 +268,11 @@ class PlaybackController internal constructor(
         record(ProgressReason.ItemChanged)
     }
 
+    fun captureResumeState(): PlaybackResumeState = PlaybackResumeState(
+        positionMillis = currentPositionMillis(),
+        playWhenReady = player.playWhenReady,
+    )
+
     fun release() {
         stallWatchdog.cancel()
         controllerScope.cancel()
@@ -269,11 +285,12 @@ class PlaybackController internal constructor(
     private fun startSource(
         target: PlaybackSourceKind,
         positionMillis: Long,
+        playWhenReady: Boolean = true,
     ) {
         stallWatchdog.cancel()
         player.setMediaItem(buildMediaItem(target), positionMillis)
         player.prepare()
-        player.playWhenReady = true
+        player.playWhenReady = playWhenReady
         stallWatchdog.update(player.playbackState, player.playWhenReady, hasFailure = false)
     }
 
@@ -399,6 +416,7 @@ class PlaybackControllerFactory @Inject constructor(
         request: PlaybackRequest,
         subtitles: List<SubtitleTrack>,
         probeDurationMillis: Long = 0L,
+        resumeState: PlaybackResumeState? = null,
         onProgress: (PlaybackRequest, Long, Long, ProgressReason) -> Unit,
     ): PlaybackController = PlaybackController(
         context = context,
@@ -406,6 +424,7 @@ class PlaybackControllerFactory @Inject constructor(
         request = request,
         subtitles = subtitles,
         probeDurationMillis = probeDurationMillis,
+        resumeState = resumeState,
         onProgress = onProgress,
     )
 }
