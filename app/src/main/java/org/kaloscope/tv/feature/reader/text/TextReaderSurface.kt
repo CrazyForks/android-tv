@@ -53,6 +53,10 @@ internal fun TextReaderSurface(
     val dimensions = settings.toDpDimensions(LocalDensity.current)
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
+    val paragraphs = content.text
+        .split(PARAGRAPH_BREAK)
+        .map(String::trim)
+        .filter(String::isNotEmpty)
     BoxWithConstraints(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter,
@@ -78,14 +82,17 @@ internal fun TextReaderSurface(
                         return@onPreviewKeyEvent true
                     }
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    // Empty content has no scroll container to establish its bounds.
                     when (event.key) {
-                        Key.DirectionUp -> if (scrollState.value == 0) {
+                        Key.DirectionUp -> if (paragraphs.isEmpty() || scrollState.value == 0) {
                             onBoundary(ReaderBoundary.Start)
                         } else {
                             scope.launch { scrollState.animateScrollBy(-viewportPixels * 0.85f) }
                         }
 
-                        Key.DirectionDown -> if (scrollState.value >= scrollState.maxValue) {
+                        Key.DirectionDown -> if (
+                            paragraphs.isEmpty() || scrollState.value >= scrollState.maxValue
+                        ) {
                             onBoundary(ReaderBoundary.End)
                         } else {
                             scope.launch { scrollState.animateScrollBy(viewportPixels * 0.85f) }
@@ -98,10 +105,6 @@ internal fun TextReaderSurface(
                     true
                 },
         ) {
-            val paragraphs = content.text
-                .split(PARAGRAPH_BREAK)
-                .map(String::trim)
-                .filter(String::isNotEmpty)
             if (paragraphs.isEmpty()) {
                 Text(
                     text = stringResource(R.string.reader_empty_text),

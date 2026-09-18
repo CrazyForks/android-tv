@@ -77,6 +77,60 @@ class ReaderScreenTest {
     }
 
     @Test
+    fun emptyTextSupportsChapterBoundariesAndLayeredBack() {
+        var exits = 0
+        setReader(textState(text = ""), onBack = { exits += 1 })
+
+        composeRule.onNodeWithText("本章没有文本内容").assertExists()
+        val content = composeRule.onNodeWithTag("text-reader-content")
+        content.assertIsFocused()
+            .performKeyInput {
+                pressKey(Key.DirectionLeft)
+                pressKey(Key.DirectionRight)
+            }
+            .assertIsFocused()
+        composeRule.onNodeWithTag("reader-bottom-controls").assertDoesNotExist()
+
+        content.performKeyInput { pressKey(Key.DirectionDown) }
+        control("下一章").assertIsFocused()
+        pressBack()
+        content.assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionUp) }
+        control("上一章").assertIsFocused()
+        pressBack()
+        content.assertIsFocused()
+            .performKeyInput { pressKey(Key.Enter) }
+        control("上一章").assertIsFocused()
+        pressBack()
+        content.assertIsFocused()
+        composeRule.runOnIdle { assertEquals(0, exits) }
+
+        pressBack()
+        composeRule.runOnIdle { assertEquals(1, exits) }
+    }
+
+    @Test
+    fun blankSingleChapterTextUsesSettingsAtBothBoundaries() {
+        setReader(
+            textState(
+                text = " \n\t\r\n ",
+                chapterItems = listOf(chapters.first()),
+                selectedChapterIndex = 0,
+            ),
+        )
+
+        composeRule.onNodeWithText("本章没有文本内容").assertExists()
+        val content = composeRule.onNodeWithTag("text-reader-content")
+        content.assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionDown) }
+        control("阅读设置").assertIsFocused().assertIsEnabled()
+        pressBack()
+        content.assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionUp) }
+        control("阅读设置").assertIsFocused().assertIsEnabled()
+    }
+
+    @Test
     fun emptyScrollingImagesEndBoundaryFocusesNextChapter() {
         setReader(imageState())
 
