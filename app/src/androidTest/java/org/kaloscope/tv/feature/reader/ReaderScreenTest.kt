@@ -522,6 +522,19 @@ class ReaderScreenTest {
     }
 
     @Test
+    fun pagedLoadingFromEmptyContentShowsFirstImage() {
+        assertPagedAppendPosition(initialImages = emptyList(), expectedPosition = 1)
+    }
+
+    @Test
+    fun pagedLoadingAfterLastImageShowsFirstAppendedImage() {
+        assertPagedAppendPosition(
+            initialImages = listOf("https://cdn.example.test/page-1.jpg"),
+            expectedPosition = 2,
+        )
+    }
+
+    @Test
     fun imageContentRevisionDoesNotRevealHiddenTitle() {
         composeRule.mainClock.autoAdvance = false
         var state by mutableStateOf(imageState())
@@ -1298,6 +1311,63 @@ class ReaderScreenTest {
             useUnmergedTree = true,
         ).assertExists()
         composeRule.onNodeWithText("正在加载后续图片…").assertDoesNotExist()
+    }
+
+    private fun assertPagedAppendPosition(
+        initialImages: List<String>,
+        expectedPosition: Int,
+    ) {
+        val allImages = initialImages + listOf(
+            "https://cdn.example.test/appended-1.jpg",
+            "https://cdn.example.test/appended-2.jpg",
+        )
+        var state by mutableStateOf(
+            imageState(readMode = ImageReadMode.Paged, images = initialImages).let {
+                it.copy(
+                    content = it.content.copy(imageCount = allImages.size),
+                    imagesExhausted = false,
+                )
+            },
+        )
+        var loadMoreRequests = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                ReaderScreen(
+                    session = session(),
+                    state = state,
+                    onBack = {},
+                    onSelectChapter = {},
+                    onLoadMoreImages = {
+                        loadMoreRequests += 1
+                        state = state.copy(isLoadingMore = true)
+                    },
+                    onImageSettings = {},
+                    onTextSettings = {},
+                    onChapterOrder = {},
+                    onDismissChapterError = {},
+                    onDismissPageError = {},
+                )
+            }
+        }
+        composeRule.onNodeWithTag("image-reader-paged")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionRight) }
+        composeRule.onNodeWithTag("reader-image-loading-more-paged").assertExists()
+        composeRule.runOnIdle {
+            assertEquals(1, loadMoreRequests)
+            state = state.copy(
+                content = state.content.copy(images = allImages),
+                isLoadingMore = false,
+                imagesExhausted = true,
+            )
+        }
+
+        composeRule.onNodeWithTag("image-reader-paged")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionCenter) }
+
+        composeRule.onNodeWithText("第 $expectedPosition / ${allImages.size} 页").assertExists()
+        control("章节").assertIsFocused()
     }
 
     private fun textLayoutForText(text: String): TextLayoutResult {

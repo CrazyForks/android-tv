@@ -419,7 +419,11 @@ private fun PagedImages(
     val scope = rememberCoroutineScope()
     LaunchedEffect(content.images.size, advanceAfterLoad) {
         if (advanceAfterLoad && content.images.size > previousSize.intValue) {
-            index = (index + 1).coerceAtMost(content.images.lastIndex)
+            index = if (previousSize.intValue == 0) {
+                0
+            } else {
+                (index + 1).coerceAtMost(content.images.lastIndex)
+            }
             advanceAfterLoad = false
             pageTransitioning = true
             scope.launch {
