@@ -338,6 +338,59 @@ class PlayerViewModelSettingsTest {
 
     @Test
     @OptIn(ExperimentalCoroutinesApi::class)
+    fun `failed progress save retries at the same position on exit`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val store = PlaybackRequestStore()
+            val historyRepository = RecordingHistoryRepository()
+            val viewModel = PlayerViewModel(
+                requestStore = store,
+                mediaRepository = PlaybackExtrasRepository(),
+                historyRepository = historyRepository,
+                networkResourceRepository = unusedNetworkResourceRepository(),
+            )
+            val requestId = checkNotNull(viewModel.createFromHistory(session(), history()))
+            val request = store.get(requestId) as PlaybackRequest.LocalMedia
+            viewModel.load(session(), requestId)
+            advanceUntilIdle()
+            val initial = viewModel.uiState.value as PlayerUiState.Content
+            var savedCallbacks = 0
+            fun record(reason: ProgressReason, nowMillis: Long) {
+                viewModel.recordProgress(
+                    session = session(),
+                    request = request,
+                    positionMillis = 10_000,
+                    durationMillis = 60_000,
+                    reason = reason,
+                    nowMillis = nowMillis,
+                    onSaved = { savedCallbacks += 1 },
+                )
+            }
+
+            historyRepository.result = AppResult.Failure(AppError.Offline)
+            record(ProgressReason.Paused, nowMillis = 0)
+            advanceUntilIdle()
+            assertEquals(initial.copy(progressError = AppError.Offline), viewModel.uiState.value)
+            assertEquals(0, savedCallbacks)
+
+            historyRepository.result = AppResult.Success(Unit)
+            record(ProgressReason.Exit, nowMillis = 1_000)
+            advanceUntilIdle()
+            assertEquals(listOf(10L, 10L), historyRepository.recordedPositions)
+            assertEquals(initial, viewModel.uiState.value)
+            assertEquals(1, savedCallbacks)
+
+            record(ProgressReason.Exit, nowMillis = 2_000)
+            advanceUntilIdle()
+            assertEquals(listOf(10L, 10L), historyRepository.recordedPositions)
+            assertEquals(1, savedCallbacks)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `adjacent local playback starts at zero and reloads its extras`() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(dispatcher)

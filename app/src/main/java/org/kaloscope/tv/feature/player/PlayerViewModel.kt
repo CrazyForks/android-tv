@@ -132,15 +132,12 @@ class PlayerViewModel @Inject constructor(
         val recorder = progressRecorders.getOrPut(localRequest.mediaId) {
             PlaybackProgressRecorder()
         }
-        if (!recorder.shouldRecord(
-                positionMillis = positionMillis,
-                durationMillis = durationMillis,
-                nowMillis = nowMillis,
-                reason = reason,
-            )
-        ) {
-            return
-        }
+        val attemptId = recorder.beginRecord(
+            positionMillis = positionMillis,
+            durationMillis = durationMillis,
+            nowMillis = nowMillis,
+            reason = reason,
+        ) ?: return
         // Preserve elapsed time when a stream has not exposed its duration yet.
         val safePosition = if (durationMillis > 0) {
             positionMillis.coerceIn(0, durationMillis)
@@ -164,10 +161,13 @@ class PlayerViewModel @Inject constructor(
                 percentage = percentage,
             )
             when (result) {
-                is AppResult.Failure -> coordinator.reportProgressFailure(
-                    mediaId = localRequest.mediaId,
-                    error = result.error,
-                )
+                is AppResult.Failure -> {
+                    recorder.recordFailed(attemptId)
+                    coordinator.reportProgressFailure(
+                        mediaId = localRequest.mediaId,
+                        error = result.error,
+                    )
+                }
                 is AppResult.Success -> {
                     coordinator.reportProgressSaved(localRequest.mediaId)
                     onSaved()
