@@ -284,6 +284,60 @@ class PlayerViewModelSettingsTest {
 
     @Test
     @OptIn(ExperimentalCoroutinesApi::class)
+    fun `successful progress save clears warning and later failures still surface`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val store = PlaybackRequestStore()
+            val historyRepository = RecordingHistoryRepository()
+            val viewModel = PlayerViewModel(
+                requestStore = store,
+                mediaRepository = PlaybackExtrasRepository(),
+                historyRepository = historyRepository,
+                networkResourceRepository = unusedNetworkResourceRepository(),
+            )
+            val requestId = checkNotNull(viewModel.createFromHistory(session(), history()))
+            val request = store.get(requestId) as PlaybackRequest.LocalMedia
+            viewModel.load(session(), requestId)
+            advanceUntilIdle()
+            val initial = viewModel.uiState.value as PlayerUiState.Content
+            var savedCallbacks = 0
+            fun record(positionMillis: Long) {
+                viewModel.recordProgress(
+                    session = session(),
+                    request = request,
+                    positionMillis = positionMillis,
+                    durationMillis = 60_000,
+                    reason = ProgressReason.Periodic,
+                    nowMillis = positionMillis,
+                    onSaved = { savedCallbacks += 1 },
+                )
+            }
+
+            historyRepository.result = AppResult.Failure(AppError.Offline)
+            record(10_000)
+            advanceUntilIdle()
+            assertEquals(initial.copy(progressError = AppError.Offline), viewModel.uiState.value)
+            assertEquals(0, savedCallbacks)
+
+            historyRepository.result = AppResult.Success(Unit)
+            record(30_000)
+            advanceUntilIdle()
+            assertEquals(initial, viewModel.uiState.value)
+            assertEquals(1, savedCallbacks)
+
+            historyRepository.result = AppResult.Failure(AppError.Timeout)
+            record(50_000)
+            advanceUntilIdle()
+            assertEquals(initial.copy(progressError = AppError.Timeout), viewModel.uiState.value)
+            assertEquals(1, savedCallbacks)
+            assertEquals(listOf(10L, 30L, 50L), historyRepository.recordedPositions)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `adjacent local playback starts at zero and reloads its extras`() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(dispatcher)
@@ -480,6 +534,8 @@ class PlayerViewModelSettingsTest {
 private class RecordingHistoryRepository : HistoryRepository {
     var positionSeconds: Long? = null
     var percentage: Int? = null
+    var result: AppResult<Unit> = AppResult.Success(Unit)
+    val recordedPositions = mutableListOf<Long>()
 
     override suspend fun getRecentVideos(
         session: Session,
@@ -493,7 +549,8 @@ private class RecordingHistoryRepository : HistoryRepository {
     ): AppResult<Unit> {
         this.positionSeconds = positionSeconds
         this.percentage = percentage
-        return AppResult.Success(Unit)
+        recordedPositions += positionSeconds
+        return result
     }
 }
 

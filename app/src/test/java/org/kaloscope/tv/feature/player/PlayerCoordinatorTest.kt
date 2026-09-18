@@ -6,6 +6,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.kaloscope.tv.core.common.AppError
@@ -185,11 +186,92 @@ class PlayerCoordinatorTest {
         val coordinator = PlayerCoordinator(store, FakeMediaRepository())
         coordinator.load(session(), request.requestId)
 
-        coordinator.reportProgressFailure(AppError.Offline)
+        coordinator.reportProgressFailure(request.mediaId, AppError.Offline)
 
         val content = coordinator.state.value as PlayerUiState.Content
         assertEquals(request, content.request)
         assertEquals(AppError.Offline, content.progressError)
+    }
+
+    @Test
+    fun `late save from previous episode does not clear the new episode failure`() = runTest {
+        val request = request()
+        val store = PlaybackRequestStore().apply { put(request) }
+        val coordinator = PlayerCoordinator(store, FakeMediaRepository())
+        coordinator.load(session(), request.requestId)
+        val next = request.copy(mediaId = 302, path = "/media/video-2.mkv")
+        coordinator.replaceRequest(session(), next)
+        coordinator.reportProgressFailure(next.mediaId, AppError.Timeout)
+        val failed = coordinator.state.value as PlayerUiState.Content
+
+        coordinator.reportProgressSaved(request.mediaId)
+
+        assertEquals(failed, coordinator.state.value)
+        coordinator.reportProgressSaved(next.mediaId)
+        assertEquals(failed.copy(progressError = null), coordinator.state.value)
+    }
+
+    @Test
+    fun `successful save preserves authorization failure for root handling`() = runTest {
+        val request = request()
+        val store = PlaybackRequestStore().apply { put(request) }
+        val coordinator = PlayerCoordinator(store, FakeMediaRepository())
+        coordinator.load(session(), request.requestId)
+        coordinator.reportProgressFailure(request.mediaId, AppError.Unauthorized)
+        val failed = coordinator.state.value
+
+        coordinator.reportProgressSaved(request.mediaId)
+
+        assertEquals(failed, coordinator.state.value)
+    }
+
+    @Test
+    fun `episode loading does not restore a recovered progress failure`() = runTest {
+        val request = request()
+        val store = PlaybackRequestStore().apply { put(request) }
+        val repository = FakeMediaRepository()
+        val coordinator = PlayerCoordinator(store, repository)
+        coordinator.load(session(), request.requestId)
+        coordinator.reportProgressFailure(request.mediaId, AppError.Offline)
+        val subtitles = CompletableDeferred<AppResult<List<SubtitleTrack>>>()
+        repository.deferredSubtitles = subtitles
+        val next = request.copy(mediaId = 302, path = "/media/video-2.mkv")
+        coordinator.beginItemSwitch()
+        val switchJob = launch { coordinator.replaceRequest(session(), next) }
+        runCurrent()
+
+        coordinator.reportProgressSaved(request.mediaId)
+        subtitles.complete(AppResult.Success(emptyList()))
+        switchJob.join()
+
+        val content = coordinator.state.value as PlayerUiState.Content
+        assertEquals(next, content.request)
+        assertNull(content.progressError)
+    }
+
+    @Test
+    fun `episode loading preserves progress failures reported while waiting`() = runTest {
+        val request = request()
+        val store = PlaybackRequestStore().apply { put(request) }
+        val repository = FakeMediaRepository()
+        val coordinator = PlayerCoordinator(store, repository)
+        coordinator.load(session(), request.requestId)
+        val subtitles = CompletableDeferred<AppResult<List<SubtitleTrack>>>()
+        repository.deferredSubtitles = subtitles
+        val next = request.copy(mediaId = 302, path = "/media/video-2.mkv")
+        coordinator.beginItemSwitch()
+        val switchJob = launch { coordinator.replaceRequest(session(), next) }
+        runCurrent()
+
+        coordinator.reportProgressFailure(request.mediaId, AppError.Offline)
+        subtitles.complete(AppResult.Success(emptyList()))
+        switchJob.join()
+
+        val content = coordinator.state.value as PlayerUiState.Content
+        assertEquals(next, content.request)
+        assertEquals(AppError.Offline, content.progressError)
+        coordinator.reportProgressSaved(request.mediaId)
+        assertNull((coordinator.state.value as PlayerUiState.Content).progressError)
     }
 
     @Test
@@ -319,7 +401,7 @@ class PlayerCoordinatorTest {
         val subtitleRetry = launch { coordinator.retryExtra(session(), PlayerExtra.Subtitles) }
         val danmakuRetry = launch { coordinator.retryExtra(session(), PlayerExtra.Danmakus) }
         runCurrent()
-        coordinator.reportProgressFailure(AppError.Offline)
+        coordinator.reportProgressFailure(request.mediaId, AppError.Offline)
         subtitles.complete(AppResult.Success(listOf(subtitle())))
         subtitleRetry.join()
 

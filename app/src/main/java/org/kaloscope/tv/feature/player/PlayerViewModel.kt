@@ -164,8 +164,14 @@ class PlayerViewModel @Inject constructor(
                 percentage = percentage,
             )
             when (result) {
-                is AppResult.Failure -> coordinator.reportProgressFailure(result.error)
-                is AppResult.Success -> onSaved()
+                is AppResult.Failure -> coordinator.reportProgressFailure(
+                    mediaId = localRequest.mediaId,
+                    error = result.error,
+                )
+                is AppResult.Success -> {
+                    coordinator.reportProgressSaved(localRequest.mediaId)
+                    onSaved()
+                }
             }
         }
     }

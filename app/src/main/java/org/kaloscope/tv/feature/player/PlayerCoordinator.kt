@@ -49,10 +49,12 @@ class PlayerCoordinator(
     private val mediaRepository: MediaRepository,
 ) {
     private val mutableState = MutableStateFlow<PlayerUiState>(PlayerUiState.Loading())
+    private var progressErrorMediaId: Long? = null
 
     val state: StateFlow<PlayerUiState> = mutableState.asStateFlow()
 
     fun beginLoad() {
+        progressErrorMediaId = null
         mutableState.value = PlayerUiState.Loading()
     }
 
@@ -85,14 +87,16 @@ class PlayerCoordinator(
         request: PlaybackRequest,
     ) {
         requestStore.put(request)
-        val progressError = (mutableState.value as? PlayerUiState.Content)?.progressError
-        mutableState.value = buildContent(session, request, progressError)
+        val content = buildContent(session, request)
+        // Progress writes can finish while the next episode's supplementary data loads.
+        mutableState.value = content.copy(
+            progressError = (mutableState.value as? PlayerUiState.Content)?.progressError,
+        )
     }
 
     private suspend fun buildContent(
         session: Session,
         request: PlaybackRequest,
-        progressError: AppError? = null,
         onPreparationStage: (PlaybackPreparationStage) -> Unit = {},
     ): PlayerUiState.Content =
         when (request) {
@@ -101,13 +105,11 @@ class PlayerCoordinator(
                 subtitles = emptyList(),
                 danmakus = request.source.danmakus,
                 extraFailures = emptyMap(),
-                progressError = progressError,
             )
 
             is PlaybackRequest.LocalMedia -> loadLocalContent(
                 session = session,
                 request = request,
-                progressError = progressError,
                 onPreparationStage = onPreparationStage,
             )
         }
@@ -115,7 +117,6 @@ class PlayerCoordinator(
     private suspend fun loadLocalContent(
         session: Session,
         request: PlaybackRequest.LocalMedia,
-        progressError: AppError?,
         onPreparationStage: (PlaybackPreparationStage) -> Unit,
     ): PlayerUiState.Content {
         // Independent supplementary requests share startup latency and degrade separately.
@@ -146,7 +147,6 @@ class PlayerCoordinator(
                     put(PlayerExtra.MediaProbe, probeResult.error)
                 }
             },
-            progressError = progressError,
         )
     }
 
@@ -200,8 +200,17 @@ class PlayerCoordinator(
         mutableState.value = content.copy(switchingItem = false, switchError = error)
     }
 
-    fun reportProgressFailure(error: AppError) {
+    fun reportProgressFailure(mediaId: Long, error: AppError) {
         val content = mutableState.value as? PlayerUiState.Content ?: return
+        progressErrorMediaId = mediaId
         mutableState.value = content.copy(progressError = error)
+    }
+
+    fun reportProgressSaved(mediaId: Long) {
+        val content = mutableState.value as? PlayerUiState.Content ?: return
+        // Another episode's write cannot recover this failure; auth errors belong to the root.
+        if (progressErrorMediaId != mediaId || content.progressError == AppError.Unauthorized) return
+        progressErrorMediaId = null
+        mutableState.value = content.copy(progressError = null)
     }
 }
