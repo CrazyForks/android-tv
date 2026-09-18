@@ -499,7 +499,9 @@ private fun PlayerContent(
                 ) ?: return@onPreviewKeyEvent false
                 val handled = when (command) {
                     PlayerControlCommand.TogglePlaybackAndShowControls -> {
-                        togglePlaybackWithFeedback()
+                        if (event.nativeKeyEvent.repeatCount == 0) {
+                            togglePlaybackWithFeedback()
+                        }
                         true
                     }
 

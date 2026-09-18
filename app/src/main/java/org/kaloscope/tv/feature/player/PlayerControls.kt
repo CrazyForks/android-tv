@@ -936,7 +936,11 @@ private fun SeekablePlayerProgress(
 
                     PlayerControlCommand.SubmitSeekPreview -> onSeekPreviewFinished()
 
-                    PlayerControlCommand.TogglePlaybackAndShowControls -> onPlayPause()
+                    PlayerControlCommand.TogglePlaybackAndShowControls -> {
+                        if (event.nativeKeyEvent.repeatCount == 0) {
+                            onPlayPause()
+                        }
+                    }
 
                     is PlayerControlCommand.ShowFullControls -> {
                         if (command.focusTarget != PlayerControlFocusTarget.PlayPause) {
