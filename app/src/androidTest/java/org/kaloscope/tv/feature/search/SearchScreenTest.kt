@@ -30,6 +30,7 @@ import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -2440,6 +2441,83 @@ class SearchScreenTest {
     @Test
     fun menuWithoutFiltersFocusesSearchWithoutSubmitting() {
         assertMenuShortcutFromDeepResults(filtersAvailable = false)
+    }
+
+    @Test
+    fun menuWhileEditingReturnsToSearchFieldInNavigationMode() {
+        assertMenuShortcutLeavesEditing(filtersAvailable = false)
+    }
+
+    @Test
+    fun closingFiltersOpenedWhileEditingReturnsToSearchFieldInNavigationMode() {
+        assertMenuShortcutLeavesEditing(filtersAvailable = true)
+    }
+
+    private fun assertMenuShortcutLeavesEditing(filtersAvailable: Boolean) {
+        var currentState by mutableStateOf(
+            state(
+                filters = if (filtersAvailable) listOf(regionFilter()) else emptyList(),
+            ).copy(query = ""),
+        )
+        var searches = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                SearchScreen(
+                    session = session(),
+                    state = currentState,
+                    requestInitialFocus = true,
+                    onRefreshIndexers = {},
+                    onSelectIndexer = {},
+                    onQueryChange = { currentState = currentState.copy(query = it) },
+                    onSearch = { searches += 1 },
+                    onRetry = {},
+                    onLoadMore = {},
+                    onResultFocused = {},
+                    onOpenResult = {},
+                    onOpenFilters = { currentState = currentState.copy(filterDrawerOpen = true) },
+                    onDismissFilters = { currentState = currentState.copy(filterDrawerOpen = false) },
+                    onApplyFilters = {},
+                    onClearFilters = {},
+                )
+            }
+        }
+
+        val input = composeRule.onNodeWithTag("network-search-input")
+        input.assertIsFocused()
+            .performKeyInput { pressKey(Key.Enter) }
+            .performTextInput("query")
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.sendKeyDownUpSync(AndroidKeyEvent.KEYCODE_MENU)
+        if (filtersAvailable) {
+            composeRule.onNodeWithTag("filter-option-region-all").assertIsFocused()
+            instrumentation.sendKeyDownUpSync(AndroidKeyEvent.KEYCODE_BACK)
+            composeRule.onNodeWithTag("search-filter-drawer").assertDoesNotExist()
+        }
+        val action = composeRule.onNodeWithTag(
+            if (filtersAvailable) "search-filter-button" else "search-action-button",
+        )
+        action.assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionLeft) }
+        input.assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionRight) }
+        action.assertIsFocused()
+        composeRule.runOnIdle {
+            assertEquals("query", currentState.query)
+            assertEquals(0, searches)
+        }
+
+        action.performKeyInput { pressKey(Key.DirectionLeft) }
+        input.assertIsFocused()
+            .performKeyInput { pressKey(Key.Enter) }
+            .performTextInput("!")
+        input.performImeAction()
+        composeRule.runOnIdle {
+            assertEquals("query!", currentState.query)
+            assertEquals(1, searches)
+        }
+        input.assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionRight) }
+        action.assertIsFocused()
     }
 
     @Test

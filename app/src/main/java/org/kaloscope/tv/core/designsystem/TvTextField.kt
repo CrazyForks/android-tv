@@ -251,6 +251,9 @@ private fun TvTextFieldSurface(
                 fieldFocused = it.isFocused
                 if (!it.isFocused) {
                     pendingActivationKey = null
+                    if (editing) {
+                        exitEditing()
+                    }
                 }
             }
             .onPreInterceptKeyBeforeSoftKeyboard { event ->
