@@ -44,6 +44,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.kaloscope.tv.app.KaloscopeTheme
+import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.designsystem.OnBackground
 import org.kaloscope.tv.core.model.ImageReadMode
 import org.kaloscope.tv.core.model.ImageReaderSettings
@@ -84,6 +85,96 @@ class ReaderScreenTest {
             .performKeyInput { pressKey(Key.DirectionDown) }
 
         control("下一章").assertIsFocused()
+    }
+
+    @Test
+    fun emptyScrollingImagesKeepFocusThroughLoadingFailureAndRetry() {
+        var state by mutableStateOf(
+            imageState().let {
+                it.copy(
+                    content = it.content.copy(imageCount = 2),
+                    imagesExhausted = false,
+                )
+            },
+        )
+        var loadMoreRequests = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                ReaderScreen(
+                    session = session(),
+                    state = state,
+                    onBack = {},
+                    onSelectChapter = {},
+                    onLoadMoreImages = {
+                        loadMoreRequests += 1
+                        state = state.copy(isLoadingMore = true, pageError = null)
+                    },
+                    onImageSettings = {},
+                    onTextSettings = {},
+                    onChapterOrder = {},
+                    onDismissChapterError = {},
+                    onDismissPageError = {},
+                )
+            }
+        }
+        composeRule.onNodeWithTag("image-reader-scroll")
+            .assertIsFocused()
+            .performKeyInput {
+                pressKey(Key.DirectionLeft)
+                pressKey(Key.DirectionRight)
+            }
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionUp) }
+        control("上一章").assertIsFocused()
+        pressBack()
+        composeRule.onNodeWithTag("image-reader-scroll")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionDown) }
+
+        composeRule.onNodeWithTag("reader-image-loading-more-scroll").assertExists()
+        composeRule.onNodeWithTag("image-reader-scroll").assertIsFocused()
+        composeRule.runOnIdle {
+            assertEquals(1, loadMoreRequests)
+            state = state.copy(isLoadingMore = false, pageError = AppError.Offline)
+        }
+        composeRule.onNodeWithTag("reader-recoverable-error").assertExists()
+        composeRule.onNodeWithTag("image-reader-scroll")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionDown) }
+
+        composeRule.onNodeWithTag("reader-image-loading-more-scroll").assertExists()
+        composeRule.onNodeWithTag("image-reader-scroll").assertIsFocused()
+        composeRule.runOnIdle {
+            assertEquals(2, loadMoreRequests)
+            state = state.copy(
+                content = state.content.copy(
+                    images = listOf(
+                        "https://cdn.example.test/page-1.jpg",
+                        "https://cdn.example.test/page-2.jpg",
+                    ),
+                ),
+                isLoadingMore = false,
+                imagesExhausted = true,
+            )
+        }
+        composeRule.onNodeWithTag("reader-recoverable-error").assertDoesNotExist()
+        composeRule.onNodeWithTag("image-reader-scroll")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionDown) }
+        composeRule.waitForIdle()
+        val viewport = composeRule.onNodeWithTag("image-reader-scroll")
+            .fetchSemanticsNode().boundsInRoot
+        val secondImage = composeRule.onNodeWithTag("reader-image-1")
+            .fetchSemanticsNode().boundsInRoot
+        assertEquals(viewport.top, secondImage.top, 1f)
+
+        composeRule.onNodeWithTag("image-reader-scroll")
+            .performKeyInput { pressKey(Key.DirectionCenter) }
+        // Reopening restores the action selected by the earlier start boundary.
+        control("上一章").assertIsFocused()
+        pressBack()
+        composeRule.onNodeWithTag("reader-bottom-controls").assertDoesNotExist()
+        composeRule.onNodeWithTag("image-reader-scroll").assertIsFocused()
     }
 
     @Test

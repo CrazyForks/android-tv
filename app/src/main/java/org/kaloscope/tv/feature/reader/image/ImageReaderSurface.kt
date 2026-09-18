@@ -192,19 +192,6 @@ private fun ScrollingImages(
             .distinctUntilChanged()
             .collect(preloadController::updateTarget)
     }
-    if (content.images.isEmpty() && !isLoadingMore) {
-        LaunchedEffect(contentRevision) { onPositionChanged(0) }
-        EmptyImageContent(
-            imagesExhausted = imagesExhausted,
-            controlsVisible = controlsVisible,
-            focusRequester = focusRequester,
-            onToggleControls = onToggleControls,
-            onEnterControls = onEnterControls,
-            onBoundary = onBoundary,
-            onLoadMore = onLoadMore,
-        )
-        return
-    }
     LaunchedEffect(contentRevision, listState, content.images.isEmpty()) {
         snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
@@ -255,6 +242,19 @@ private fun ScrollingImages(
                 }
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 if (scrollInProgress || isLoadingMore) return@onPreviewKeyEvent true
+                if (content.images.isEmpty()) {
+                    when (event.key) {
+                        Key.DirectionUp -> onBoundary(ReaderBoundary.Start)
+                        Key.DirectionDown -> if (imagesExhausted) {
+                            onBoundary(ReaderBoundary.End)
+                        } else {
+                            onLoadMore()
+                        }
+
+                        else -> return@onPreviewKeyEvent false
+                    }
+                    return@onPreviewKeyEvent true
+                }
                 if (settings.zoomMode == ImageZoomMode.FitHeight) {
                     when (event.key) {
                         Key.DirectionLeft -> {
@@ -348,6 +348,21 @@ private fun ScrollingImages(
             },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // Keep the same focusable list across empty content, loading, and appended images.
+        if (content.images.isEmpty() && !isLoadingMore) {
+            item(key = EMPTY_IMAGE_ITEM_KEY) {
+                Box(
+                    modifier = Modifier.fillParentMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = stringResource(R.string.reader_empty_images),
+                        color = Color.LightGray,
+                        fontSize = 22.sp,
+                    )
+                }
+            }
+        }
         itemsIndexed(
             items = content.images,
             key = { index, url -> "$index:$url" },
@@ -553,55 +568,6 @@ private fun rememberReaderImagePreloadController(
 }
 
 @Composable
-private fun EmptyImageContent(
-    imagesExhausted: Boolean,
-    controlsVisible: Boolean,
-    focusRequester: FocusRequester,
-    onToggleControls: () -> Unit,
-    onEnterControls: () -> Unit,
-    onBoundary: (ReaderBoundary) -> Unit,
-    onLoadMore: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .focusRequester(focusRequester)
-            .focusable()
-            .testTag("image-reader-scroll")
-            .onPreviewKeyEvent { event ->
-                if (
-                    event.consumeReaderControlKey(
-                        controlsVisible = controlsVisible,
-                        onToggleControls = onToggleControls,
-                        onEnterControls = onEnterControls,
-                    )
-                ) {
-                    return@onPreviewKeyEvent true
-                }
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                when (event.key) {
-                    Key.DirectionUp -> onBoundary(ReaderBoundary.Start)
-                    Key.DirectionDown -> when {
-                        controlsVisible -> onEnterControls()
-                        imagesExhausted -> onBoundary(ReaderBoundary.End)
-                        else -> onLoadMore()
-                    }
-
-                    else -> return@onPreviewKeyEvent false
-                }
-                true
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = stringResource(R.string.reader_empty_images),
-            color = Color.LightGray,
-            fontSize = 22.sp,
-        )
-    }
-}
-
-@Composable
 private fun ReaderRemoteImage(
     session: Session,
     url: String,
@@ -761,6 +727,7 @@ private fun Key.toReaderDirection(): ReaderDirection? =
 private const val MAX_AUTOMATIC_RETRIES = 3
 private const val IMAGE_PAN_STEP = 0.5f
 private const val PAGE_TRANSITION_MILLIS = 200L
+private const val EMPTY_IMAGE_ITEM_KEY = "reader-empty-images"
 private const val LOADING_MORE_ITEM_KEY = "reader-loading-more"
 private const val TRAILING_ALIGNMENT_ITEM_KEY = "reader-trailing-alignment"
 private val INLINE_LOADING_HEIGHT = 120.dp
