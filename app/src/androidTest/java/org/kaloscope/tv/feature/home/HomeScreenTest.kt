@@ -536,6 +536,32 @@ class HomeScreenTest {
     }
 
     @Test
+    fun refreshAfterRestoringHistoryKeepsNewSelectionAndRefreshFocus() {
+        assertRefreshKeepsSelection(
+            refreshedItems = historyItems().reversed().map {
+                it.copy(positionSeconds = 1_200, percentage = 60)
+            },
+        )
+    }
+
+    @Test
+    fun newEpisodeOnRefreshDoesNotReplayHistoryFocusRestoration() {
+        val items = historyItems()
+        val nextEpisode = items.last().copy(
+            historyId = 403,
+            mediaId = 303,
+            episode = 5,
+        )
+        assertRefreshKeepsSelection(
+            refreshedItems = listOf(
+                nextEpisode,
+                items.first().copy(positionSeconds = 1_200, percentage = 60),
+                items.last(),
+            ),
+        )
+    }
+
+    @Test
     fun carouselSupportsTwoDimensionalDpadNavigation() {
         showContentHome()
 
@@ -552,6 +578,55 @@ class HomeScreenTest {
             .assertIsFocused()
             .performKeyInput { pressKey(Key.DirectionDown) }
         composeRule.onNodeWithTag("history-card-301").assertIsFocused()
+    }
+
+    private fun assertRefreshKeepsSelection(refreshedItems: List<WatchHistoryItem>) {
+        val state = mutableStateOf(HomeUiState.Content(historyItems()))
+        var playedItem: WatchHistoryItem? = null
+        var refreshCount = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                HomeScreen(
+                    session = testSession(),
+                    state = state.value,
+                    onRefresh = {
+                        refreshCount += 1
+                        state.value = HomeUiState.Content(refreshedItems)
+                    },
+                    restoreMediaId = 302L,
+                    onOpenLibrary = {},
+                    onOpenSearch = {},
+                    onOpenMedia = {},
+                    onPlayHistory = { playedItem = it },
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("history-card-302")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionLeft) }
+        composeRule.onNodeWithTag("history-card-301")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionUp) }
+        composeRule.onNodeWithText("继续播放")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionUp) }
+        composeRule.onNodeWithTag("home-refresh")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.Enter) }
+
+        composeRule.onNodeWithTag("home-refresh").assertIsFocused()
+        composeRule.onNodeWithTag("history-card-301").assertIsSelected()
+        composeRule.onNodeWithTag("history-selected-title").assertTextEquals("星海纪行")
+        composeRule.onNodeWithTag("home-refresh")
+            .performKeyInput { pressKey(Key.DirectionDown) }
+        composeRule.onNodeWithText("继续播放")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.Enter) }
+        composeRule.runOnIdle {
+            assertEquals(1, refreshCount)
+            assertEquals(refreshedItems.single { it.mediaId == 301L }, playedItem)
+        }
     }
 
     @Test

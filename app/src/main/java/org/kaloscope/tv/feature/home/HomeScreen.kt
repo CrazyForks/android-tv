@@ -189,6 +189,7 @@ private fun HistoryContent(
     onBackdropChanged: (HomeBackdropPresentation?) -> Unit,
 ) {
     var selectedMediaId by remember { mutableStateOf<Long?>(null) }
+    var hasRestoredFocus by remember { mutableStateOf(false) }
     val selectedItem = items.firstOrNull { it.mediaId == selectedMediaId }
         ?: items.first()
     val listState = rememberLazyListState()
@@ -203,9 +204,10 @@ private fun HistoryContent(
     val carouselEdgeOffset = with(LocalDensity.current) { 48.dp.roundToPx() }
 
     LaunchedEffect(items, restoreMediaId) {
-        val restored = restoreMediaId?.let { mediaId ->
-            items.firstOrNull { it.mediaId == mediaId }
-        }
+        // Refreshes must not replay the return target after the user has resumed browsing.
+        val restored = restoreMediaId
+            ?.takeUnless { hasRestoredFocus }
+            ?.let { mediaId -> items.firstOrNull { it.mediaId == mediaId } }
         val retained = items.firstOrNull { it.mediaId == selectedMediaId }
         selectedMediaId = (restored ?: retained ?: items.first()).mediaId
     }
@@ -239,9 +241,10 @@ private fun HistoryContent(
         )
     }
     LaunchedEffect(restoreMediaId, selectedItem.mediaId) {
-        if (restoreMediaId == selectedItem.mediaId) {
+        if (!hasRestoredFocus && restoreMediaId == selectedItem.mediaId) {
             withFrameNanos { }
             selectedCardFocusRequester.requestFocus()
+            hasRestoredFocus = true
         }
     }
 
