@@ -1,6 +1,7 @@
 package org.kaloscope.tv.feature.settings
 
 import android.graphics.Color as AndroidColor
+import android.os.SystemClock
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
@@ -2016,6 +2017,56 @@ class SettingsScreenTest {
 
         composeRule.onNodeWithText("保存").assertDoesNotExist()
         composeRule.onNodeWithText("首选语言").assertIsFocused()
+    }
+
+    @Test
+    fun subtitleLanguageLongBackLeavesDialogOpen() {
+        var saves = 0
+        setSettingsContent(
+            settings = TvSettings(),
+            section = SettingsSection.Subtitle,
+            onSubtitleSettings = { saves += 1 },
+        )
+        composeRule.onNodeWithText("首选语言")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+        composeRule.onNodeWithTag("subtitle-language-selector")
+            .performKeyInput { pressKey(Key.Enter) }
+        composeRule.onNodeWithTag("subtitle-language-editor").assertIsFocused()
+
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val downTime = SystemClock.uptimeMillis()
+        try {
+            for (repeatCount in 0..3) {
+                instrumentation.sendKeySync(
+                    AndroidKeyEvent(
+                        downTime, SystemClock.uptimeMillis(), AndroidKeyEvent.ACTION_DOWN,
+                        AndroidKeyEvent.KEYCODE_BACK, repeatCount,
+                    ),
+                )
+                composeRule.waitForIdle()
+                composeRule.onNodeWithTag("subtitle-language-editor").assertIsFocused()
+            }
+        } finally {
+            instrumentation.sendKeySync(
+                AndroidKeyEvent(
+                    downTime, SystemClock.uptimeMillis(), AndroidKeyEvent.ACTION_UP,
+                    AndroidKeyEvent.KEYCODE_BACK, 0,
+                ),
+            )
+            composeRule.waitForIdle()
+        }
+
+        composeRule.onNodeWithTag("subtitle-language-editor").assertDoesNotExist()
+        composeRule.onNodeWithTag("subtitle-language-selector").assertIsFocused()
+        composeRule.onNodeWithText("保存").assertExists()
+
+        instrumentation.sendKeyDownUpSync(AndroidKeyEvent.KEYCODE_BACK)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("保存").assertDoesNotExist()
+        composeRule.onNodeWithText("首选语言").assertIsFocused()
+        composeRule.runOnIdle { assertEquals(0, saves) }
     }
 
     private fun textLayoutFor(text: String): TextLayoutResult {

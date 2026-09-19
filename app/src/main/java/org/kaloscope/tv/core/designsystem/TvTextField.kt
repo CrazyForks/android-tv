@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreInterceptKeyBeforeSoftKeyboard
@@ -169,6 +170,20 @@ private fun TvTextFieldSurface(
         keyboardController?.hide()
         editing = false
     }
+    fun consumeBack(event: KeyEvent): Boolean {
+        if (event.key != Key.Back || (!editing && onBack == null)) {
+            return false
+        }
+        // Repeated downs belong to one press and must not dismiss after leaving editing.
+        if (event.type == KeyEventType.KeyUp) {
+            if (editing) {
+                exitEditing()
+            } else {
+                onBack?.invoke()
+            }
+        }
+        return true
+    }
     val exitToward: (FocusDirection, (() -> Unit)?) -> Unit = { direction, move ->
         keyboardController?.hide()
         editing = false
@@ -256,30 +271,11 @@ private fun TvTextFieldSurface(
                     }
                 }
             }
-            .onPreInterceptKeyBeforeSoftKeyboard { event ->
-                if (event.key != Key.Back) {
-                    false
-                } else {
-                    when {
-                        editing -> {
-                            if (event.type == KeyEventType.KeyDown) {
-                                exitEditing()
-                            }
-                            true
-                        }
-
-                        onBack != null -> {
-                            if (event.type == KeyEventType.KeyDown) {
-                                onBack()
-                            }
-                            true
-                        }
-
-                        else -> false
-                    }
-                }
-            }
+            .onPreInterceptKeyBeforeSoftKeyboard(::consumeBack)
             .onPreviewKeyEvent { event ->
+                if (event.key == Key.Back) {
+                    return@onPreviewKeyEvent consumeBack(event)
+                }
                 val isActivationKey = event.key == Key.DirectionCenter ||
                     event.key == Key.Enter ||
                     event.key == Key.NumPadEnter
@@ -294,20 +290,10 @@ private fun TvTextFieldSurface(
                     pendingActivationKey = null
                     enterEditing()
                     true
-                } else if (!editing && event.key == Key.Back && onBack != null) {
-                    if (event.type == KeyEventType.KeyDown) {
-                        onBack()
-                    }
-                    true
                 } else if (event.type != KeyEventType.KeyDown) {
                     false
                 } else if (editing) {
                     when (event.key) {
-                        Key.Back -> {
-                            exitEditing()
-                            true
-                        }
-
                         Key.DirectionUp -> {
                             exitToward(FocusDirection.Up, onMoveUp)
                             true

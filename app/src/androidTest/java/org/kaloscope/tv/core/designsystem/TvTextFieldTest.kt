@@ -83,6 +83,36 @@ class TvTextFieldTest {
     }
 
     @Test
+    fun backWaitsForReleaseBeforeLeavingEditing() {
+        var backs = 0
+        showField(onBack = { backs += 1 })
+        enterEditing()
+
+        composeRule.onNodeWithTag(EditorTag)
+            .performKeyInput { keyDown(Key.Back) }
+            .assertIsFocused()
+            .performKeyInput { keyUp(Key.Back) }
+
+        composeRule.onNodeWithTag(EditorTag).assertDoesNotExist()
+        composeRule.onNodeWithTag(SelectorTag).assertIsFocused()
+        composeRule.runOnIdle { assertEquals(0, backs) }
+    }
+
+    @Test
+    fun navigationBackInvokesCallbackOnRelease() {
+        var backs = 0
+        showField(onBack = { backs += 1 })
+
+        composeRule.onNodeWithTag(SelectorTag)
+            .performKeyInput { keyDown(Key.Back) }
+        composeRule.runOnIdle { assertEquals(0, backs) }
+
+        composeRule.onNodeWithTag(SelectorTag)
+            .performKeyInput { keyUp(Key.Back) }
+        composeRule.runOnIdle { assertEquals(1, backs) }
+    }
+
+    @Test
     fun downLeavesEditingAndMovesToNextControl() {
         val nextFocus = FocusRequester()
         var moves by mutableIntStateOf(0)
@@ -268,6 +298,7 @@ class TvTextFieldTest {
         isPassword: Boolean = false,
         imeAction: ImeAction = ImeAction.Done,
         onImeAction: () -> Unit = {},
+        onBack: (() -> Unit)? = null,
         onMoveDown: (() -> Unit)? = null,
         onMoveRight: (() -> Unit)? = null,
         contentAfter: @androidx.compose.runtime.Composable () -> Unit = {},
@@ -285,6 +316,7 @@ class TvTextFieldTest {
                         isPassword = isPassword,
                         imeAction = imeAction,
                         onImeAction = onImeAction,
+                        onBack = onBack,
                         onMoveDown = onMoveDown,
                         onMoveRight = onMoveRight,
                         selectorTestTag = SelectorTag,
