@@ -12,9 +12,11 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.IndexerSourceProfile
 import org.kaloscope.tv.core.model.NetworkIndexer
@@ -24,6 +26,7 @@ import org.kaloscope.tv.core.model.NetworkSearchResult
 import org.kaloscope.tv.core.model.ReaderContent
 import org.kaloscope.tv.core.model.ReaderImageContent
 import org.kaloscope.tv.core.model.ReaderImagePage
+import org.kaloscope.tv.core.model.ReaderTextContent
 import org.kaloscope.tv.core.model.ResolvedNetworkResource
 import org.kaloscope.tv.core.model.SavedServer
 import org.kaloscope.tv.core.model.SearchFilterValue
@@ -39,16 +42,18 @@ import org.kaloscope.tv.data.search.SearchRepository
 class SearchViewModelTest {
     private val dispatcher = StandardTestDispatcher()
     private lateinit var repository: PendingSearchRepository
+    private lateinit var resourceRepository: PendingNetworkResourceRepository
     private lateinit var viewModel: SearchViewModel
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         repository = PendingSearchRepository()
+        resourceRepository = PendingNetworkResourceRepository()
         viewModel = SearchViewModel(
             repository = repository,
             requestStore = PlaybackRequestStore(),
-            networkResourceRepository = UnusedNetworkResourceRepository,
+            networkResourceRepository = resourceRepository,
             readerRequestStore = ReaderRequestStore(),
         )
     }
@@ -176,6 +181,89 @@ class SearchViewModelTest {
         assertEquals(12L, content.selectedIndexerId)
         assertEquals(listOf("other"), content.results.items.map { it.id })
     }
+
+    @Test
+    fun `repeated result clicks preserve the pending resolution and destination`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page("v1")))
+        runCurrent()
+        viewModel.openResult(session(), "v1")
+        runCurrent()
+        val pending = resourceRepository.requests.single()
+
+        repeat(2) {
+            viewModel.openResult(session(), "v1")
+            runCurrent()
+        }
+
+        assertFalse("Repeated clicks must not cancel resource resolution", pending.cancelled)
+        assertEquals(1, resourceRepository.requests.size)
+        pending.result.complete(AppResult.Success(textResource()))
+        runCurrent()
+        val destination = (viewModel.uiState.value as SearchUiState.Content).pendingDestination
+        assertTrue(destination is SearchPendingDestination.Reader)
+
+        viewModel.openResult(session(), "v1")
+        runCurrent()
+
+        assertEquals(1, resourceRepository.requests.size)
+        assertEquals(
+            destination,
+            (viewModel.uiState.value as SearchUiState.Content).pendingDestination,
+        )
+    }
+
+    @Test
+    fun `failed resource resolution can be retried`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page("v1")))
+        runCurrent()
+        viewModel.openResult(session(), "v1")
+        runCurrent()
+        resourceRepository.requests.single().result.complete(AppResult.Failure(AppError.Offline))
+        runCurrent()
+
+        val failed = viewModel.uiState.value as SearchUiState.Content
+        assertNull(failed.resolvingResultId)
+        assertEquals(AppError.Offline, failed.resolutionError)
+        viewModel.openResult(session(), "v1")
+        runCurrent()
+
+        assertEquals(2, resourceRepository.requests.size)
+        resourceRepository.requests.last().result.complete(AppResult.Success(textResource()))
+        runCurrent()
+        val retried = viewModel.uiState.value as SearchUiState.Content
+        assertNull(retried.resolutionError)
+        assertTrue(retried.pendingDestination is SearchPendingDestination.Reader)
+    }
+
+    @Test
+    fun `cancelled resource resolution can be reopened`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page("v1")))
+        runCurrent()
+        viewModel.openResult(session(), "v1")
+        runCurrent()
+        val cancelled = resourceRepository.requests.single()
+
+        assertTrue(viewModel.cancelResolution())
+        runCurrent()
+        assertTrue(cancelled.cancelled)
+        assertNull((viewModel.uiState.value as SearchUiState.Content).resolvingResultId)
+        viewModel.openResult(session(), "v1")
+        runCurrent()
+
+        assertEquals(2, resourceRepository.requests.size)
+        resourceRepository.requests.last().result.complete(AppResult.Success(textResource()))
+        runCurrent()
+        assertTrue(
+            (viewModel.uiState.value as SearchUiState.Content).pendingDestination is
+                SearchPendingDestination.Reader,
+        )
+    }
 }
 
 private class PendingSearchRepository : SearchRepository {
@@ -216,6 +304,32 @@ private class PendingSearchPage(val indexerId: Long, val pageNumber: Int) {
     var cancelled = false
 }
 
+private class PendingNetworkResourceRepository :
+    NetworkResourceRepository by UnusedNetworkResourceRepository {
+    val requests = mutableListOf<PendingResourceResolution>()
+
+    override suspend fun resolveResource(
+        session: Session,
+        indexerId: Long,
+        result: NetworkSearchResult,
+        preferredDefinition: TranscodeResolution,
+    ): AppResult<ResolvedNetworkResource> {
+        val request = PendingResourceResolution()
+        requests += request
+        return try {
+            request.result.await()
+        } catch (error: CancellationException) {
+            request.cancelled = true
+            throw error
+        }
+    }
+}
+
+private class PendingResourceResolution {
+    val result = CompletableDeferred<AppResult<ResolvedNetworkResource>>()
+    var cancelled = false
+}
+
 private object UnusedNetworkResourceRepository : NetworkResourceRepository {
     override suspend fun resolveResource(
         session: Session,
@@ -242,6 +356,15 @@ private object UnusedNetworkResourceRepository : NetworkResourceRepository {
         content: ReaderImageContent,
     ): AppResult<ReaderImagePage> = error("Unexpected image page request")
 }
+
+private fun textResource() = ResolvedNetworkResource.Text(
+    ReaderTextContent.network(
+        indexerId = 11,
+        resourceId = "v1",
+        title = "测试文本",
+        text = "正文",
+    ),
+)
 
 private fun page(
     resultId: String,
