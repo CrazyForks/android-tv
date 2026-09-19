@@ -108,6 +108,31 @@ class MediaMapperTest {
     }
 
     @Test
+    fun `detail orders season episode and title with null numbers treated as zero`() {
+        val detail = MediaItemData(
+            id = 201,
+            name = "Collection",
+            path = "/media/collection",
+            children = listOf(
+                child(408, 2, 0, "Part 0"),
+                child(407, 1, 2, "Part 0"),
+                child(406, 1, 1, "Part 2"),
+                child(405, 1, null, "Part 10"),
+                child(404, 0, null, "Part 2"),
+                child(403, null, 0, "Part 2"),
+                child(402, null, null, "Part 02"),
+                child(401, null, null, "Part 1"),
+            ),
+        ).toDetail()
+
+        checkNotNull(detail)
+        assertEquals(
+            listOf(401L, 404L, 403L, 402L, 405L, 406L, 407L, 408L),
+            detail.children.map(MediaSummary::id),
+        )
+    }
+
+    @Test
     fun `invalid detail does not create a dead destination`() {
         val detail = MediaItemData(
             id = 0,

@@ -36,14 +36,13 @@ internal fun IndexerPageData.toModels(): List<NetworkIndexer> =
             "search_start" !in indexer.nodeTypes ||
             !indexer.onlyPreview
         ) {
-            null
-        } else {
-            NetworkIndexer(
-                id = indexer.id,
-                name = name,
-                iconPath = indexer.icon.trimmedOrNull(),
-            )
+            return@mapNotNull null
         }
+        NetworkIndexer(
+            id = indexer.id,
+            name = name,
+            iconPath = indexer.icon.trimmedOrNull(),
+        )
     }
 
 internal fun IndexerSearchConfigData.toFilterDefinitions(): List<SearchFilterDefinition> =
@@ -119,10 +118,9 @@ internal fun IndexerResourceData.toPlaybackSource(
             ?.contentOrNull
             .trimmedOrNull()
         if (definitionUrl == null || label == null) {
-            null
-        } else {
-            NetworkDefinition(label = label, url = definitionUrl)
+            return@mapNotNull null
         }
+        NetworkDefinition(label = label, url = definitionUrl)
     }
     val videoType = videoType.resolveVideoType(fallbackVideoType)
     val preferredDefinitionIndex = mappedDefinitions
@@ -151,16 +149,15 @@ internal fun IndexerResourceData.toPlaybackSource(
             val text = comment.text.trimmedOrNull()
             val start = comment.start
             if (text == null || start == null || start < 0) {
-                null
-            } else {
-                DanmakuComment(
-                    id = comment.id,
-                    text = text,
-                    mode = comment.mode ?: "scroll",
-                    color = comment.color,
-                    startMillis = start,
-                )
+                return@mapNotNull null
             }
+            DanmakuComment(
+                id = comment.id,
+                text = text,
+                mode = comment.mode ?: "scroll",
+                color = comment.color,
+                startMillis = start,
+            )
         },
         definitions = mappedDefinitions,
         chapters = mappedChapters,
@@ -175,15 +172,14 @@ internal fun IndexerResourceData.toChapters(): List<NetworkChapter> =
         val chapterUrl = chapter.url.trimmedOrNull()
         val chapterTitle = chapter.title.trimmedOrNull() ?: chapter.volume.trimmedOrNull()
         if ((chapterId == null && chapterUrl == null) || chapterTitle == null) {
-            null
-        } else {
-            NetworkChapter(
-                id = chapterId,
-                url = chapterUrl,
-                title = chapterTitle,
-                volume = chapter.volume.trimmedOrNull(),
-            )
+            return@mapNotNull null
         }
+        NetworkChapter(
+            id = chapterId,
+            url = chapterUrl,
+            title = chapterTitle,
+            volume = chapter.volume.trimmedOrNull(),
+        )
     }
 
 private fun IndexerResourceData.toSearchResult(

@@ -1,13 +1,16 @@
 package org.kaloscope.tv.data.search
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.kaloscope.tv.core.model.SearchFilterType
+import org.kaloscope.tv.core.model.NetworkChapter
 import org.kaloscope.tv.core.model.NetworkMediaType
 import org.kaloscope.tv.core.model.NetworkVideoType
 import org.kaloscope.tv.core.player.TranscodeResolution
@@ -372,6 +375,24 @@ class SearchMapperTest {
     }
 
     @Test
+    fun `invalid definition label fails even when definition URL is missing`() {
+        val resource = resource("v1", "Video", "video").copy(
+            url = "https://cdn.example/video.mp4",
+            definitions = listOf(
+                IndexerDefinitionData(definition = JsonObject(emptyMap())),
+            ),
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            resource.toPlaybackSource(
+                indexerId = 11,
+                fallbackTitle = "Fallback",
+                preferredDefinition = TranscodeResolution.P1080,
+            )
+        }
+    }
+
+    @Test
     fun `missing preferred DASH quality still applies HEVC preference`() {
         val source = IndexerResourceData(
             id = "v1",
@@ -454,6 +475,28 @@ class SearchMapperTest {
         assertEquals("https://cdn.example/ep-1.mpd", source.url)
         assertEquals(NetworkVideoType.Dash, source.videoType)
         assertEquals(0, source.selectedChapterIndex)
+    }
+
+    @Test
+    fun `chapters retain source order duplicates and volume title fallback`() {
+        val chapters = IndexerResourceData(
+            chapters = listOf(
+                IndexerChapterData(" ep-2 ", null, " Chapter 2 ", " Volume A "),
+                IndexerChapterData(null, " /chapter-1.mp4 ", " ", " Volume B "),
+                IndexerChapterData("ep-2", null, "Duplicate", null),
+                IndexerChapterData(null, " ", "Missing source", null),
+                IndexerChapterData("ep-3", null, " ", " "),
+            ),
+        ).toChapters()
+
+        assertEquals(
+            listOf(
+                NetworkChapter("ep-2", null, "Chapter 2", "Volume A"),
+                NetworkChapter(null, "/chapter-1.mp4", "Volume B", "Volume B"),
+                NetworkChapter("ep-2", null, "Duplicate", null),
+            ),
+            chapters,
+        )
     }
 
     @Test

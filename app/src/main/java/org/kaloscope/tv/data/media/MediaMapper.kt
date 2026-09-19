@@ -80,7 +80,11 @@ internal fun MediaItemData.toDetail(): MediaDetail? {
     // Backend children may include hidden files retained for administrative workflows.
     val visibleChildren = children
         .mapNotNull(MediaItemData::toSummary)
-        .sortedWith(Comparator(::compareMediaSummaries))
+        .sortedWith(
+            compareBy<MediaSummary> { it.season ?: 0 }
+                .thenBy { it.episode ?: 0 }
+                .thenComparator { left, right -> compareNaturalTitles(left.title, right.title) },
+        )
     return MediaDetail(
         id = id,
         library = lib
@@ -131,17 +135,6 @@ private fun MediaItemData.toSummary(): MediaSummary? {
         episode = episode,
         aired = aired.trimmedOrNull(),
     )
-}
-
-private fun compareMediaSummaries(
-    left: MediaSummary,
-    right: MediaSummary,
-): Int {
-    val seasonComparison = compareValues(left.season ?: 0, right.season ?: 0)
-    if (seasonComparison != 0) return seasonComparison
-    val episodeComparison = compareValues(left.episode ?: 0, right.episode ?: 0)
-    if (episodeComparison != 0) return episodeComparison
-    return compareNaturalTitles(left.title, right.title)
 }
 
 private fun compareNaturalTitles(left: String, right: String): Int {
