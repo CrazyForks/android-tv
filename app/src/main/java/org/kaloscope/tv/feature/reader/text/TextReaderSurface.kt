@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,10 +54,12 @@ internal fun TextReaderSurface(
     val dimensions = settings.toDpDimensions(LocalDensity.current)
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
-    val paragraphs = content.text
-        .split(PARAGRAPH_BREAK)
-        .map(String::trim)
-        .filter(String::isNotEmpty)
+    val paragraphs = remember(content.text) {
+        content.text
+            .split(PARAGRAPH_BREAK)
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+    }
     BoxWithConstraints(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter,

@@ -23,6 +23,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTextExactly
@@ -74,6 +75,58 @@ class ReaderScreenTest {
             .performKeyInput { pressKey(Key.DirectionUp) }
 
         control("上一章").assertIsFocused()
+    }
+
+    @Test
+    fun textParagraphsRefreshWhenChapterContentChanges() {
+        var state by mutableStateOf(textState(text = "  第一段 \n\n 第二段  \n\n "))
+        composeRule.setContent {
+            KaloscopeTheme {
+                ReaderScreen(
+                    session = session(),
+                    state = state,
+                    onBack = {},
+                    onSelectChapter = {},
+                    onLoadMoreImages = {},
+                    onImageSettings = {},
+                    onTextSettings = {},
+                    onChapterOrder = {},
+                    onDismissChapterError = {},
+                    onDismissPageError = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("text-reader-paragraph-0").assertTextEquals("第一段")
+        composeRule.onNodeWithTag("text-reader-paragraph-1").assertTextEquals("第二段")
+        composeRule.onNodeWithTag("text-reader-paragraph-2").assertDoesNotExist()
+
+        composeRule.runOnIdle {
+            state = state.copy(
+                content = state.content.copy(text = " 替换正文 "),
+                contentRevision = state.contentRevision + 1,
+            )
+        }
+        composeRule.onNodeWithTag("text-reader-paragraph-0").assertTextEquals("替换正文")
+        composeRule.onNodeWithTag("text-reader-paragraph-1").assertDoesNotExist()
+
+        composeRule.runOnIdle {
+            state = state.copy(
+                content = state.content.copy(text = " \n\t\r\n "),
+                contentRevision = state.contentRevision + 1,
+            )
+        }
+        composeRule.onNodeWithText("本章没有文本内容").assertExists()
+        composeRule.onNodeWithTag("text-reader-paragraph-0").assertDoesNotExist()
+
+        composeRule.runOnIdle {
+            state = state.copy(
+                content = state.content.copy(text = " 恢复正文 "),
+                contentRevision = state.contentRevision + 1,
+            )
+        }
+        composeRule.onNodeWithTag("text-reader-paragraph-0").assertTextEquals("恢复正文")
+        composeRule.onNodeWithText("本章没有文本内容").assertDoesNotExist()
     }
 
     @Test
