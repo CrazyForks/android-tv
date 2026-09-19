@@ -137,11 +137,12 @@ app/build/outputs/apk/debug/app-debug.apk
 请勿提交服务器地址、账号、令牌、媒体路径、签名文件、密码或其他私有配置。
 无论代码由人类还是 AI 生成，提交者都应先审阅最终 diff，并对提交内容负责。
 
-## 相关项目
+## 相关链接
 
 - [服务端与 Web UI](https://github.com/kaloscope/kaloscope)
 - [社区工作流模板](https://github.com/kaloscope/workflows)
 - [弹弹play API 代理服务](https://github.com/kaloscope/danmaku)
+- [LINUX DO](https://linux.do)
 
 ## 开源协议
 
