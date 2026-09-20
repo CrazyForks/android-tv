@@ -60,7 +60,13 @@ class SearchViewModel @Inject constructor(
 
     fun search(session: Session) = startRequest { coordinator.search(session) }
 
-    fun retry(session: Session) = startRequest { coordinator.retry(session) }
+    fun retry(session: Session) {
+        // Ignore stale retry callbacks before they can cancel a newer request.
+        if ((uiState.value as? SearchUiState.Content)?.results !is SearchResultsState.Error) {
+            return
+        }
+        startRequest { coordinator.retry(session) }
+    }
 
     fun loadNext(session: Session) {
         // Pagination must not replace an in-flight page or an explicit user request.

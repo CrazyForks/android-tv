@@ -162,6 +162,76 @@ class SearchViewModelTest {
     }
 
     @Test
+    fun `repeated retry preserves the in-flight request`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Failure(AppError.Offline))
+        runCurrent()
+        viewModel.retry(session())
+        runCurrent()
+        val retryRequest = repository.requests.last()
+
+        repeat(2) {
+            viewModel.retry(session())
+            runCurrent()
+        }
+        retryRequest.result.complete(AppResult.Success(page("recovered")))
+        runCurrent()
+
+        val content = viewModel.uiState.value as SearchUiState.Content
+        assertTrue("Repeated retry must finish loading", content.results is SearchResultsState.Content)
+        assertEquals(listOf("recovered"), content.results.items.map { it.id })
+        assertFalse(retryRequest.cancelled)
+        assertEquals(listOf(1, 1), repository.requests.map { it.pageNumber })
+    }
+
+    @Test
+    fun `late retry does not cancel a new search`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Failure(AppError.Offline))
+        runCurrent()
+        viewModel.updateQuery("new query")
+        viewModel.search(session())
+        runCurrent()
+        val searchRequest = repository.requests.last()
+
+        viewModel.retry(session())
+        runCurrent()
+        searchRequest.result.complete(AppResult.Success(page("new")))
+        runCurrent()
+
+        val content = viewModel.uiState.value as SearchUiState.Content
+        assertEquals("new query", content.submittedKeyword)
+        assertEquals(listOf("new"), content.results.items.map { it.id })
+        assertFalse(searchRequest.cancelled)
+        assertEquals(2, repository.requests.size)
+    }
+
+    @Test
+    fun `failed retry can be retried again`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Failure(AppError.Offline))
+        runCurrent()
+        viewModel.retry(session())
+        runCurrent()
+        repository.requests.last().result.complete(AppResult.Failure(AppError.Offline))
+        runCurrent()
+
+        val failed = viewModel.uiState.value as SearchUiState.Content
+        assertEquals(SearchResultsState.Error(AppError.Offline), failed.results)
+        viewModel.retry(session())
+        runCurrent()
+        repository.requests.last().result.complete(AppResult.Success(page("recovered")))
+        runCurrent()
+
+        val content = viewModel.uiState.value as SearchUiState.Content
+        assertEquals(listOf("recovered"), content.results.items.map { it.id })
+        assertEquals(listOf(1, 1, 1), repository.requests.map { it.pageNumber })
+    }
+
+    @Test
     fun `selecting another indexer cancels the pending request`() = runTest(dispatcher) {
         viewModel.load(session())
         runCurrent()
