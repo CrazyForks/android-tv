@@ -48,6 +48,7 @@ class KaloscopeViewModel @Inject constructor(
 
     private var loginCoordinator: LoginCoordinator? = null
     private var loginStateJob: Job? = null
+    private var serverConnectionJob: Job? = null
 
     val bootstrapState: StateFlow<BootstrapState> = mutableBootstrapState.asStateFlow()
     val serverSetupState: StateFlow<ServerSetupState> = serverCoordinator.state
@@ -61,10 +62,17 @@ class KaloscopeViewModel @Inject constructor(
 
     fun updateServerName(value: String) = serverCoordinator.updateName(value)
 
-    fun updateServerUrl(value: String) = serverCoordinator.updateUrl(value)
+    fun updateServerUrl(value: String) {
+        serverConnectionJob?.cancel()
+        serverConnectionJob = null
+        serverCoordinator.updateUrl(value)
+    }
 
     fun testServerConnection() {
-        viewModelScope.launch {
+        if (serverConnectionJob?.isActive == true) {
+            return
+        }
+        serverConnectionJob = viewModelScope.launch {
             serverCoordinator.testConnection()
         }
     }
@@ -79,6 +87,8 @@ class KaloscopeViewModel @Inject constructor(
         viewModelScope.launch {
             // Drop any password-bearing login state before showing another root screen.
             stopLoginCollection()
+            serverConnectionJob?.cancel()
+            serverConnectionJob = null
             serverCoordinator.reset()
             serverDeletionCoordinator.clearError()
             mutableBootstrapState.value = BootstrapState.NeedsServer(

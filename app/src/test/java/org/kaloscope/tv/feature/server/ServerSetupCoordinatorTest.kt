@@ -1,8 +1,12 @@
 package org.kaloscope.tv.feature.server
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -127,6 +131,114 @@ class ServerSetupCoordinatorTest {
     }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `editing url during testing discards the previous connection result`() = runTest {
+        for (result in listOf(
+            AppResult.Success(ServerConnectionInfo("https://old.example", "0.8.7")),
+            AppResult.Failure(AppError.Timeout),
+        )) {
+            val repository = PendingServerRepository()
+            val coordinator = coordinator(repository)
+            coordinator.updateName("Demo")
+            coordinator.updateUrl("https://old.example")
+            val connection = launch { coordinator.testConnection() }
+            runCurrent()
+
+            coordinator.updateUrl("https://new.example")
+            repository.results.single().complete(result)
+            connection.join()
+
+            assertEquals(
+                ServerSetupState(name = "Demo", url = "https://new.example"),
+                coordinator.state.value,
+            )
+            assertNull(coordinator.save())
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `reset discards a pending result even when the default url is unchanged`() = runTest {
+        val repository = PendingServerRepository()
+        val coordinator = coordinator(repository, initialUrl = "https://demo.example")
+        val connection = launch { coordinator.testConnection() }
+        runCurrent()
+
+        coordinator.reset()
+        repository.results.single().complete(
+            AppResult.Success(ServerConnectionInfo("https://demo.example", "0.8.7")),
+        )
+        connection.join()
+
+        assertEquals(ServerSetupState(url = "https://demo.example"), coordinator.state.value)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `an old failure cannot clear a newer connection proof`() = runTest {
+        val repository = PendingServerRepository()
+        val coordinator = coordinator(repository)
+        coordinator.updateUrl("https://old.example")
+        val oldConnection = launch { coordinator.testConnection() }
+        runCurrent()
+
+        coordinator.reset()
+        coordinator.updateUrl("https://new.example")
+        val newConnection = launch { coordinator.testConnection() }
+        runCurrent()
+        coordinator.updateName("Edited while testing")
+        repository.results.last().complete(
+            AppResult.Success(ServerConnectionInfo("https://new.example", "0.8.7")),
+        )
+        newConnection.join()
+        val verifiedState = coordinator.state.value
+        assertEquals("Edited while testing", verifiedState.name)
+        assertTrue(verifiedState.canSave)
+
+        repository.results.first().complete(AppResult.Failure(AppError.Timeout))
+        oldConnection.join()
+
+        assertEquals(verifiedState, coordinator.state.value)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `cancelling an old test preserves the new loading state and cancellation propagates`() =
+        runTest {
+            val repository = PendingServerRepository()
+            val coordinator = coordinator(repository)
+            coordinator.updateUrl("https://old.example")
+            val oldConnection = launch { coordinator.testConnection() }
+            runCurrent()
+
+            coordinator.reset()
+            coordinator.updateUrl("https://new.example")
+            var newConnectionReturned = false
+            val newConnection = launch {
+                coordinator.testConnection()
+                newConnectionReturned = true
+            }
+            runCurrent()
+
+            oldConnection.cancelAndJoin()
+            val newConnectionStillTesting = coordinator.state.value.isTesting
+            newConnection.cancelAndJoin()
+
+            assertTrue(newConnectionStillTesting)
+            assertFalse(newConnectionReturned)
+            assertFalse(coordinator.state.value.isTesting)
+            assertNull(coordinator.state.value.error)
+
+            val retry = launch { coordinator.testConnection() }
+            runCurrent()
+            repository.results.last().complete(
+                AppResult.Success(ServerConnectionInfo("https://new.example", "0.8.7")),
+            )
+            retry.join()
+            assertTrue(coordinator.state.value.canSave)
+        }
+
+    @Test
     fun `save persists and activates only the verified server`() = runBlocking {
         val repository = FakeServerRepository()
         val coordinator = coordinator(repository)
@@ -233,6 +345,19 @@ private class SuspendingServerRepository : ServerRepository {
         error("Not used")
 
     override suspend fun setActiveServer(serverId: String) = Unit
+}
+
+private class PendingServerRepository : ServerRepository {
+    val results = mutableListOf<CompletableDeferred<AppResult<ServerConnectionInfo>>>()
+
+    override suspend fun testConnection(origin: String): AppResult<ServerConnectionInfo> =
+        CompletableDeferred<AppResult<ServerConnectionInfo>>().also(results::add).await()
+
+    override suspend fun saveServer(server: SavedServer) = error("Not used")
+
+    override suspend fun deleteServer(serverId: String): List<SavedServer> = error("Not used")
+
+    override suspend fun setActiveServer(serverId: String) = error("Not used")
 }
 
 private class UpgradingServerRepository : ServerRepository {

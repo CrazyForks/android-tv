@@ -44,9 +44,11 @@ class ServerSetupCoordinator(
         url = initialUrl,
     )
     private val mutableState = MutableStateFlow(initialState)
+    private var connectionGeneration = 0L
     val state: StateFlow<ServerSetupState> = mutableState.asStateFlow()
 
     fun reset() {
+        connectionGeneration += 1
         mutableState.value = initialState
     }
 
@@ -59,8 +61,10 @@ class ServerSetupCoordinator(
 
     fun updateUrl(value: String) {
         // A connection proof is valid only for the exact origin that was tested.
+        connectionGeneration += 1
         mutableState.value = mutableState.value.copy(
             url = value,
+            isTesting = false,
             error = null,
             verifiedOrigin = null,
             serverVersion = null,
@@ -80,9 +84,13 @@ class ServerSetupCoordinator(
             return
         }
 
+        val requestGeneration = ++connectionGeneration
         mutableState.value = current.copy(isTesting = true, error = null)
         try {
-            mutableState.value = when (val result = repository.testConnection(origin)) {
+            val result = repository.testConnection(origin)
+            // Address edits and draft resets invalidate both success and failure responses.
+            if (requestGeneration != connectionGeneration) return
+            mutableState.value = when (result) {
                 is AppResult.Success -> {
                     val connection = result.value
                     mutableState.value.copy(
@@ -104,7 +112,9 @@ class ServerSetupCoordinator(
                 )
             }
         } catch (error: CancellationException) {
-            mutableState.value = mutableState.value.copy(isTesting = false)
+            if (requestGeneration == connectionGeneration) {
+                mutableState.value = mutableState.value.copy(isTesting = false)
+            }
             throw error
         }
     }
