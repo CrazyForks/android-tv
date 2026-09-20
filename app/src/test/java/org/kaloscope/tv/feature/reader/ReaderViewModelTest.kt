@@ -123,6 +123,22 @@ class ReaderViewModelTest {
         assertFalse(state.isChapterLoading)
         assertFalse(state.isLoadingMore)
     }
+
+    @Test
+    fun `closing during chapter loading cancels the request and stays idle`() = runTest(dispatcher) {
+        viewModel.selectChapter(session(), 1)
+        runCurrent()
+        assertTrue((viewModel.uiState.value as ReaderUiState.Image).isChapterLoading)
+
+        viewModel.close(request.requestId)
+        runCurrent()
+
+        assertTrue(loader.chapterCancelled)
+        assertEquals(ReaderUiState.Idle, viewModel.uiState.value)
+        loader.chapterResult.complete(AppResult.Success(imageContent(1)))
+        runCurrent()
+        assertEquals(ReaderUiState.Idle, viewModel.uiState.value)
+    }
 }
 
 private class PendingReaderContentLoader : ReaderContentLoader {
@@ -131,6 +147,7 @@ private class PendingReaderContentLoader : ReaderContentLoader {
     val pageRequests = mutableListOf<ReaderImageContent>()
     val chapterRequests = mutableListOf<Int>()
     var pageCancelled = false
+    var chapterCancelled = false
 
     override suspend fun resolveChapter(
         session: Session,
@@ -138,7 +155,12 @@ private class PendingReaderContentLoader : ReaderContentLoader {
         chapterIndex: Int,
     ): AppResult<ReaderContent> {
         chapterRequests += chapterIndex
-        return chapterResult.await()
+        return try {
+            chapterResult.await()
+        } catch (error: CancellationException) {
+            chapterCancelled = true
+            throw error
+        }
     }
 
     override suspend fun loadImagePage(

@@ -884,6 +884,68 @@ class ReaderScreenTest {
     }
 
     @Test
+    fun chapterLoadingAllowsBackToExitReader() {
+        var exits = 0
+        setReader(
+            state = textState(text = "正文").copy(isChapterLoading = true),
+            onBack = { exits += 1 },
+        )
+
+        composeRule.onNodeWithTag("reader-chapter-loading").assertIsFocused()
+        pressBack()
+
+        composeRule.runOnIdle { assertEquals(1, exits) }
+    }
+
+    @Test
+    fun backDuringChapterLoadingKeepsCoveredControlsBlocked() {
+        var exits = 0
+        var state by mutableStateOf(textState(text = "正文"))
+        composeRule.setContent {
+            KaloscopeTheme {
+                ReaderScreen(
+                    session = session(),
+                    state = state,
+                    onBack = { exits += 1 },
+                    onSelectChapter = { state = state.copy(isChapterLoading = true) },
+                    onLoadMoreImages = {},
+                    onImageSettings = {},
+                    onTextSettings = {},
+                    onChapterOrder = {},
+                    onDismissChapterError = {},
+                    onDismissPageError = {},
+                )
+            }
+        }
+        composeRule.onNodeWithTag("text-reader-content")
+            .performKeyInput { pressKey(Key.DirectionCenter) }
+        control("下一章")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+        composeRule.onNodeWithTag("reader-chapter-loading").assertIsFocused()
+
+        pressBack()
+
+        composeRule.onNodeWithTag("reader-bottom-controls").assertDoesNotExist()
+        composeRule.onNodeWithTag("reader-chapter-loading")
+            .assertIsFocused()
+            .performKeyInput {
+                pressKey(Key.DirectionUp)
+                pressKey(Key.DirectionDown)
+                pressKey(Key.DirectionLeft)
+                pressKey(Key.DirectionRight)
+                pressKey(Key.DirectionCenter)
+            }
+            .assertIsFocused()
+        composeRule.onNodeWithTag("reader-bottom-controls").assertDoesNotExist()
+        composeRule.runOnIdle { assertEquals(0, exits) }
+
+        pressBack()
+
+        composeRule.runOnIdle { assertEquals(1, exits) }
+    }
+
+    @Test
     fun textSettingsStayDarkOnLightReadingTheme() {
         setReader(
             textState(

@@ -36,7 +36,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -214,7 +213,10 @@ private fun ActiveReader(
     fun hideControls() {
         controlsVisible = false
         pendingControlFocus = null
-        contentFocus.requestFocus()
+        // Keep covered content unfocused until the chapter loading overlay is gone.
+        if (!state.isChapterLoading) {
+            contentFocus.requestFocus()
+        }
     }
 
     fun toggleControls() {
@@ -477,8 +479,7 @@ private fun ActiveReader(
                 message = stringResource(R.string.reader_switching_chapter),
                 blockInteraction = true,
                 modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.72f))
-                    .onPreviewKeyEvent { true }
+                    .background(Color.Black.copy(alpha = 0.72f)),
             )
         }
     }
