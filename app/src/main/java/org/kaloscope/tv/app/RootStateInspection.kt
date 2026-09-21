@@ -59,6 +59,7 @@ internal fun PlayerUiState.hasUnauthorized(): Boolean =
     this is PlayerUiState.Content &&
         (
             progressError == AppError.Unauthorized ||
+                switchError == AppError.Unauthorized ||
                 extraFailures.values.any { it == AppError.Unauthorized }
         )
 
