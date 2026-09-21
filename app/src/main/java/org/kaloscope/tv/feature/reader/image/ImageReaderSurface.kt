@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -657,39 +658,42 @@ private fun ReaderRemoteImage(
                     .height(viewportHeight)
                     .fillMaxWidth()
             }
-            AsyncImage(
-                model = imageRequest,
-                contentDescription = contentDescription,
-                modifier = imageModifier.heightIn(min = 1.dp),
-                contentScale = when (zoomMode) {
-                    ImageZoomMode.Auto -> ContentScale.Fit
-                    ImageZoomMode.FitWidth -> ContentScale.FillWidth
-                    ImageZoomMode.FitHeight -> ContentScale.FillHeight
-                },
-                alignment = if (zoomMode == ImageZoomMode.FitHeight) {
-                    BiasAlignment(horizontalBias = horizontalBias, verticalBias = 0f)
-                } else {
-                    Alignment.Center
-                },
-                onState = { state ->
-                    when (state) {
-                        is AsyncImagePainter.State.Empty,
-                        is AsyncImagePainter.State.Loading,
-                        -> imageLoading = true
+            // Rebuilding an equivalent request does not restart Coil's remembered painter.
+            key(requestGeneration) {
+                AsyncImage(
+                    model = imageRequest,
+                    contentDescription = contentDescription,
+                    modifier = imageModifier.heightIn(min = 1.dp),
+                    contentScale = when (zoomMode) {
+                        ImageZoomMode.Auto -> ContentScale.Fit
+                        ImageZoomMode.FitWidth -> ContentScale.FillWidth
+                        ImageZoomMode.FitHeight -> ContentScale.FillHeight
+                    },
+                    alignment = if (zoomMode == ImageZoomMode.FitHeight) {
+                        BiasAlignment(horizontalBias = horizontalBias, verticalBias = 0f)
+                    } else {
+                        Alignment.Center
+                    },
+                    onState = { state ->
+                        when (state) {
+                            is AsyncImagePainter.State.Empty,
+                            is AsyncImagePainter.State.Loading,
+                            -> imageLoading = true
 
-                        is AsyncImagePainter.State.Success -> {
-                            imageLoading = false
-                            failed = false
-                            onFinalFailureChanged(url, false)
+                            is AsyncImagePainter.State.Success -> {
+                                imageLoading = false
+                                failed = false
+                                onFinalFailureChanged(url, false)
+                            }
+                            is AsyncImagePainter.State.Error -> {
+                                imageLoading = automaticRetries < MAX_AUTOMATIC_RETRIES
+                                failed = true
+                                errorSignal += 1
+                            }
                         }
-                        is AsyncImagePainter.State.Error -> {
-                            imageLoading = automaticRetries < MAX_AUTOMATIC_RETRIES
-                            failed = true
-                            errorSignal += 1
-                        }
-                    }
-                },
-            )
+                    },
+                )
+            }
         }
         if (imageRequest != null && imageLoading) {
             KaloscopeLoadingLayout(
