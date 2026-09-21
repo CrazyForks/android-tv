@@ -1,5 +1,7 @@
 package org.kaloscope.tv.feature.server
 
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
@@ -11,7 +13,9 @@ import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
@@ -291,14 +295,96 @@ class ServerSetupCoordinatorTest {
         assertEquals(ServerSetupError.SaveFailed, coordinator.state.value.error)
         assertFalse(coordinator.state.value.isSaving)
     }
+
+    @Test
+    fun `retry after activation failure reuses the persisted server`() = runTest {
+        val repository = FakeServerRepository(activationError = IOException("storage unavailable"))
+        var createdIds = 0
+        val coordinator = coordinator(repository, createServerId = { "generated-${++createdIds}" })
+        coordinator.updateName("Demo")
+        coordinator.updateUrl("https://demo.example")
+        coordinator.testConnection()
+
+        assertNull(coordinator.save())
+        val expected = SavedServer("generated-1", "Demo", "https://demo.example")
+        assertEquals(listOf(expected), repository.savedServers)
+        assertNull(repository.activeServerId)
+        assertEquals(ServerSetupError.SaveFailed, coordinator.state.value.error)
+        assertTrue(coordinator.state.value.canSave)
+
+        repository.activationError = null
+
+        assertEquals(expected, coordinator.save())
+        assertEquals(listOf(expected), repository.savedServers)
+        assertEquals(expected.id, repository.activeServerId)
+        assertEquals(1, createdIds)
+    }
+
+    @Test
+    fun `activation cancellation propagates and retry preserves server identity`() = runTest {
+        val cancellation = CancellationException("save cancelled")
+        val repository = FakeServerRepository(activationError = cancellation)
+        var createdIds = 0
+        val coordinator = coordinator(repository, createServerId = { "generated-${++createdIds}" })
+        coordinator.updateName("Demo")
+        coordinator.updateUrl("https://demo.example")
+        coordinator.testConnection()
+
+        try {
+            coordinator.save()
+            fail("Expected cancellation")
+        } catch (actual: CancellationException) {
+            assertSame(cancellation, actual)
+        }
+        assertFalse(coordinator.state.value.isSaving)
+        assertNull(coordinator.state.value.error)
+        val expected = SavedServer("generated-1", "Demo", "https://demo.example")
+        assertEquals(listOf(expected), repository.savedServers)
+
+        repository.activationError = null
+
+        assertEquals(expected, coordinator.save())
+        assertEquals(listOf(expected), repository.savedServers)
+        assertEquals(expected.id, repository.activeServerId)
+        assertEquals(1, createdIds)
+    }
+
+    @Test
+    fun `reset starts a new server without overwriting a partially saved draft`() = runTest {
+        val repository = FakeServerRepository(activationError = IOException("storage unavailable"))
+        var createdIds = 0
+        val coordinator = coordinator(repository, createServerId = { "generated-${++createdIds}" })
+        coordinator.updateName("First")
+        coordinator.updateUrl("https://first.example")
+        coordinator.testConnection()
+        assertNull(coordinator.save())
+
+        coordinator.reset()
+        coordinator.updateName("Second")
+        coordinator.updateUrl("https://second.example")
+        coordinator.testConnection()
+        repository.activationError = null
+        val expected = SavedServer("generated-2", "Second", "https://second.example")
+
+        assertEquals(expected, coordinator.save())
+        assertEquals(
+            listOf(SavedServer("generated-1", "First", "https://first.example"), expected),
+            repository.savedServers,
+        )
+        assertEquals(expected.id, repository.activeServerId)
+        assertEquals(2, createdIds)
+    }
 }
 
 private class FakeServerRepository(
     private val testResult: AppResult<String> = AppResult.Success("0.0.0"),
     private val failSave: Boolean = false,
+    var activationError: Exception? = null,
 ) : ServerRepository {
     var testCalls = 0
-    var savedServer: SavedServer? = null
+    val savedServers = mutableListOf<SavedServer>()
+    val savedServer: SavedServer?
+        get() = savedServers.lastOrNull()
     var activeServerId: String? = null
 
     override suspend fun testConnection(origin: String): AppResult<ServerConnectionInfo> {
@@ -316,13 +402,15 @@ private class FakeServerRepository(
         if (failSave) {
             error("storage unavailable")
         }
-        savedServer = server
+        savedServers.removeAll { it.id == server.id }
+        savedServers += server
     }
 
     override suspend fun deleteServer(serverId: String): List<SavedServer> =
         error("Not used")
 
     override suspend fun setActiveServer(serverId: String) {
+        activationError?.let { throw it }
         activeServerId = serverId
     }
 }
@@ -385,9 +473,10 @@ private fun coordinator(
     repository: ServerRepository,
     initialName: String = "",
     initialUrl: String = "",
+    createServerId: () -> String = { "generated-id" },
 ) = ServerSetupCoordinator(
     repository = repository,
-    createServerId = { "generated-id" },
+    createServerId = createServerId,
     initialName = initialName,
     initialUrl = initialUrl,
 )

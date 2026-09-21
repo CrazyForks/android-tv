@@ -45,10 +45,12 @@ class ServerSetupCoordinator(
     )
     private val mutableState = MutableStateFlow(initialState)
     private var connectionGeneration = 0L
+    private var draftServerId: String? = null
     val state: StateFlow<ServerSetupState> = mutableState.asStateFlow()
 
     fun reset() {
         connectionGeneration += 1
+        draftServerId = null
         mutableState.value = initialState
     }
 
@@ -127,8 +129,9 @@ class ServerSetupCoordinator(
             return null
         }
 
+        // Activation can fail after persistence, so retries must update the same server.
         val server = SavedServer(
-            id = createServerId(),
+            id = draftServerId ?: createServerId().also { draftServerId = it },
             name = current.name.trim(),
             origin = origin,
         )
