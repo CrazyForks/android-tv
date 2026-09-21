@@ -320,6 +320,7 @@
     <string name="error_server_url">请输入有效的 HTTP 或 HTTPS 服务器地址</string>
     <string name="error_server_save">无法保存服务器，请重试</string>
     <string name="error_credentials">请输入用户名和密码</string>
+    <string name="error_session_save">无法保存登录状态，请重试</string>
     <string name="error_unauthorized">用户名、密码或登录状态无效</string>
     <string name="error_forbidden">当前账户没有访问权限</string>
     <string name="error_not_found">服务器没有提供所需接口</string>

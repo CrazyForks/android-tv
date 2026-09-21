@@ -17,6 +17,8 @@ sealed interface AppError {
 
     data object Offline : AppError
 
+    data object SessionSaveFailed : AppError
+
     data class Api(
         val code: String?,
         val requestId: String?,

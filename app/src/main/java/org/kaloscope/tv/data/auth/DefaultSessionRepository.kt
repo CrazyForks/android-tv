@@ -2,8 +2,10 @@ package org.kaloscope.tv.data.auth
 
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.SavedServer
 import org.kaloscope.tv.core.model.Session
@@ -39,7 +41,13 @@ class DefaultSessionRepository @Inject constructor(
         return when (result) {
             is AppResult.Success -> {
                 // Persist only tokens from structurally valid login responses.
-                sessionStore.setToken(server.id, result.value.token)
+                try {
+                    sessionStore.setToken(server.id, result.value.token)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    return AppResult.Failure(AppError.SessionSaveFailed)
+                }
                 AppResult.Success(result.value.toSession(server))
             }
 
