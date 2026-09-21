@@ -28,6 +28,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.keepScreenOn
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -277,6 +278,9 @@ private fun PlayerContent(
         )
     }
 
+    LaunchedEffect(controller, state.subtitles) {
+        controller.updateSubtitles(state.subtitles)
+    }
     LaunchedEffect(controller, sessionSettings.selectedSubtitleTrackId) {
         controller.selectSubtitle(sessionSettings.selectedSubtitleTrackId)
     }
@@ -553,7 +557,7 @@ private fun PlayerContent(
                     subtitleView.applySubtitleStyle(sessionSettings.subtitleSettings)
                     subtitleView.setCues(status.cues)
                 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().testTag("player-subtitle-overlay"),
             )
         }
         if (state.danmakus.isNotEmpty()) {

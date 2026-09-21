@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performSemanticsAction
@@ -24,6 +25,9 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.abs
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -34,6 +38,7 @@ import org.kaloscope.tv.core.model.NetworkVideoType
 import org.kaloscope.tv.core.model.SavedServer
 import org.kaloscope.tv.core.model.Session
 import org.kaloscope.tv.core.model.SessionUser
+import org.kaloscope.tv.core.model.SubtitleTrack
 import org.kaloscope.tv.core.player.PlaybackControllerFactory
 import org.kaloscope.tv.core.player.PlaybackRequest
 import org.kaloscope.tv.core.player.ProgressReason
@@ -46,6 +51,7 @@ class PlayerLifecycleTest {
 
     private val progress = CopyOnWriteArrayList<Progress>()
     private lateinit var request: MutableState<PlaybackRequest.NetworkVideo>
+    private lateinit var subtitles: MutableState<List<SubtitleTrack>>
 
     @Test
     fun pausedPlaybackRestoresLatestPositionAndStaysPaused() = withPlayer { owner ->
@@ -108,6 +114,72 @@ class PlayerLifecycleTest {
         )
     }
 
+    @Test
+    fun retriedSubtitlesLoadWithoutResumingPausedPlayback() = withPlayer { owner ->
+        pressProgressKey(Key.Enter)
+        pressProgressKey(Key.DirectionRight)
+        composeRule.waitUntil(10_000) {
+            progress.any { it.reason == ProgressReason.Seeked && it.positionMillis >= 10_000 }
+        }
+        val pausedPosition = progress.last { it.reason == ProgressReason.Seeked }.positionMillis
+
+        loadRetriedSubtitles()
+
+        assertPositionNear(pausedPosition, progress.last { it.reason == ProgressReason.Started })
+        pressProgressKey(Key.DirectionDown)
+        composeRule.onNodeWithTag("player-play-pause").assertContentDescriptionEquals(
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.play),
+        )
+        assertPositionNear(pausedPosition, Progress(stop(owner), ProgressReason.Exit))
+    }
+
+    @Test
+    fun retriedSubtitlesLoadWhilePlaybackContinues() = withPlayer { _ ->
+        pressProgressKey(Key.DirectionRight)
+        composeRule.waitUntil(10_000) {
+            progress.any { it.reason == ProgressReason.Seeked && it.positionMillis >= 10_000 }
+        }
+        val positionBeforeRetry = progress.last { it.reason == ProgressReason.Seeked }.positionMillis
+
+        loadRetriedSubtitles()
+
+        assertTrue(
+            progress.last { it.reason == ProgressReason.Started }.positionMillis >= positionBeforeRetry,
+        )
+        pressProgressKey(Key.DirectionDown)
+        composeRule.onNodeWithTag("player-play-pause").assertContentDescriptionEquals(
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.pause),
+        )
+    }
+
+    private fun loadRetriedSubtitles() {
+        MockWebServer().use { server ->
+            server.enqueue(
+                MockResponse().setBody("WEBVTT\n\n00:00:00.000 --> 00:01:00.000\nRetried subtitle\n"),
+            )
+            server.start()
+            val startCount = progress.count { it.reason == ProgressReason.Started }
+            val exitCount = progress.count { it.reason == ProgressReason.Exit }
+            composeRule.runOnIdle {
+                subtitles.value = listOf(
+                    SubtitleTrack(
+                        id = "retried-subtitle",
+                        label = "English",
+                        url = server.url("/subtitle.vtt").toString(),
+                        language = "en",
+                    ),
+                )
+            }
+            composeRule.waitUntil(10_000) { server.requestCount > 0 }
+            awaitStartAfter(startCount)
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodesWithTag("player-subtitle-overlay")
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+            assertEquals(exitCount, progress.count { it.reason == ProgressReason.Exit })
+        }
+    }
+
     private fun pressProgressKey(key: Key) {
         composeRule.onNodeWithTag("player-progress")
             .performSemanticsAction(SemanticsActions.RequestFocus)
@@ -143,6 +215,7 @@ class PlayerLifecycleTest {
         lateinit var owner: PlayerLifecycleOwner
         try {
             audio.writeBytes(silentAudio())
+            subtitles = mutableStateOf(emptyList())
             request = mutableStateOf(
                 PlaybackRequest.NetworkVideo(
                     requestId = "lifecycle-request",
@@ -177,7 +250,7 @@ class PlayerLifecycleTest {
                                 ),
                                 state = PlayerUiState.Content(
                                     request = request.value,
-                                    subtitles = emptyList(),
+                                    subtitles = subtitles.value,
                                     danmakus = emptyList(),
                                     extraFailures = emptyMap(),
                                 ),

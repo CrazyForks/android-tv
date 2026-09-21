@@ -56,11 +56,12 @@ class PlaybackController internal constructor(
     context: Context,
     private val session: Session,
     private val request: PlaybackRequest,
-    private val subtitles: List<SubtitleTrack>,
+    subtitles: List<SubtitleTrack>,
     private val probeDurationMillis: Long,
     resumeState: PlaybackResumeState?,
     private val onProgress: (PlaybackRequest, Long, Long, ProgressReason) -> Unit,
 ) {
+    private var subtitles = subtitles
     private var sourceKind = when (request) {
         is PlaybackRequest.LocalMedia -> PlaybackSourcePolicy.initialSource(request.playbackMode)
         is PlaybackRequest.NetworkVideo -> PlaybackSourceKind.Network
@@ -208,6 +209,19 @@ class PlaybackController internal constructor(
         selectedSubtitleTrackId = trackId
         mutableStatus.value = mutableStatus.value.copy(selectedSubtitleTrackId = trackId)
         applySubtitleSelection()
+    }
+
+    fun updateSubtitles(tracks: List<SubtitleTrack>) {
+        if (subtitles == tracks) return
+        subtitles = tracks
+        // A late subtitle response must not retry a failed stream.
+        if (mutableStatus.value.failure != null) return
+        // Retried tracks need a new media source, while the player and fallback state stay intact.
+        startSource(
+            target = sourceKind,
+            positionMillis = currentPositionMillis(),
+            playWhenReady = player.playWhenReady,
+        )
     }
 
     private fun applySubtitleSelection() {
