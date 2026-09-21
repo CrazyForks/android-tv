@@ -7,6 +7,8 @@ import org.kaloscope.tv.core.model.Session
 sealed interface BootstrapState {
     data object Loading : BootstrapState
 
+    data object StorageError : BootstrapState
+
     data class NeedsServer(val savedServers: List<SavedServer>) : BootstrapState
 
     data class NeedsLogin(val server: SavedServer) : BootstrapState

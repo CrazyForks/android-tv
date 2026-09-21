@@ -1,8 +1,11 @@
 package org.kaloscope.tv.app.bootstrap
 
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.kaloscope.tv.core.common.AppError
@@ -78,6 +81,98 @@ class BootstrapCoordinatorTest {
         assertEquals(BootstrapState.ConnectionError(server, AppError.Offline), state)
         assertFalse(data.tokenCleared)
     }
+
+    @Test
+    fun `retries failed server reads without losing the saved session`() = runBlocking {
+        val server = savedServer()
+        val session = session(server)
+        val data = FakeBootstrapData(
+            servers = listOf(server),
+            token = session.token,
+            validation = AppResult.Success(session),
+        )
+        data.serverReadFailure = IOException("Read failed")
+        val coordinator = BootstrapCoordinator(data, data)
+
+        assertEquals(BootstrapState.StorageError, coordinator.resolve())
+        assertEquals(0, data.validationCount)
+        assertFalse(data.tokenCleared)
+
+        data.serverReadFailure = null
+
+        assertEquals(BootstrapState.Ready(session), coordinator.resolve())
+        assertEquals(1, data.validationCount)
+        assertFalse(data.tokenCleared)
+    }
+
+    @Test
+    fun `reports storage error when active server cannot be read`() = runBlocking {
+        val data = FakeBootstrapData(servers = listOf(savedServer()), token = "saved-token")
+        data.activeServerReadFailure = IOException("Read failed")
+
+        val state = BootstrapCoordinator(data, data).resolve()
+
+        assertEquals(BootstrapState.StorageError, state)
+        assertEquals(0, data.validationCount)
+        assertFalse(data.tokenCleared)
+    }
+
+    @Test
+    fun `reports storage error instead of login when token cannot be read`() = runBlocking {
+        val data = FakeBootstrapData(servers = listOf(savedServer()), token = "saved-token")
+        data.tokenReadFailure = IOException("Read failed")
+
+        val state = BootstrapCoordinator(data, data).resolve()
+
+        assertEquals(BootstrapState.StorageError, state)
+        assertEquals(0, data.validationCount)
+        assertFalse(data.tokenCleared)
+    }
+
+    @Test
+    fun `retries failed removal of an unauthorized token before returning to login`() = runBlocking {
+        val server = savedServer()
+        val data = FakeBootstrapData(
+            servers = listOf(server),
+            token = "expired-token",
+            validation = AppResult.Failure(AppError.Unauthorized),
+        )
+        data.tokenClearFailure = IOException("Write failed")
+        val coordinator = BootstrapCoordinator(data, data)
+
+        assertEquals(BootstrapState.StorageError, coordinator.resolve())
+        assertFalse(data.tokenCleared)
+
+        data.tokenClearFailure = null
+
+        assertEquals(BootstrapState.NeedsLogin(server), coordinator.resolve())
+        assertEquals(2, data.validationCount)
+        assertTrue(data.tokenCleared)
+    }
+
+    @Test
+    fun `propagates cancellation during storage access`() = runBlocking {
+        val cancellation = CancellationException("Cancelled")
+        val data = FakeBootstrapData()
+        data.serverReadFailure = cancellation
+
+        val result = runCatching { BootstrapCoordinator(data, data).resolve() }
+
+        assertSame(cancellation, result.exceptionOrNull())
+        assertEquals(0, data.validationCount)
+        assertFalse(data.tokenCleared)
+    }
+
+    @Test
+    fun `propagates unexpected storage failures`() = runBlocking {
+        val failure = IllegalStateException("Unexpected failure")
+        val data = FakeBootstrapData()
+        data.serverReadFailure = failure
+
+        val result = runCatching { BootstrapCoordinator(data, data).resolve() }
+
+        assertSame(failure, result.exceptionOrNull())
+    }
 }
 
 private class FakeBootstrapData(
@@ -87,14 +182,25 @@ private class FakeBootstrapData(
     private val validation: AppResult<Session> = AppResult.Failure(AppError.Offline),
 ) : ServerStore, SessionRepository {
     var tokenCleared = false
+    var validationCount = 0
+    var serverReadFailure: Exception? = null
+    var activeServerReadFailure: Exception? = null
+    var tokenReadFailure: Exception? = null
+    var tokenClearFailure: Exception? = null
 
-    override suspend fun getServers(): List<SavedServer> = servers
+    override suspend fun getServers(): List<SavedServer> {
+        serverReadFailure?.let { throw it }
+        return servers
+    }
 
     override suspend fun save(server: SavedServer) = error("Not used")
 
     override suspend fun delete(serverId: String): List<SavedServer> = error("Not used")
 
-    override suspend fun getActiveServerId(): String? = activeServerId
+    override suspend fun getActiveServerId(): String? {
+        activeServerReadFailure?.let { throw it }
+        return activeServerId
+    }
 
     override suspend fun setActiveServerId(serverId: String) = error("Not used")
 
@@ -104,12 +210,18 @@ private class FakeBootstrapData(
         password: String,
     ): AppResult<Session> = error("Not used")
 
-    override suspend fun getToken(serverId: String): String? = token
+    override suspend fun getToken(serverId: String): String? {
+        tokenReadFailure?.let { throw it }
+        return token
+    }
 
-    override suspend fun validate(server: SavedServer, token: String): AppResult<Session> =
-        validation
+    override suspend fun validate(server: SavedServer, token: String): AppResult<Session> {
+        validationCount += 1
+        return validation
+    }
 
     override suspend fun clearToken(serverId: String) {
+        tokenClearFailure?.let { throw it }
         tokenCleared = true
     }
 }

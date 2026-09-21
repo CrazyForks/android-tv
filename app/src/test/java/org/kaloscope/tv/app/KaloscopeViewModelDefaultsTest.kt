@@ -1,5 +1,6 @@
 package org.kaloscope.tv.app
 
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -25,7 +26,7 @@ class KaloscopeViewModelDefaultsTest {
     fun `server setup starts with configured defaults`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {
-            val viewModel = viewModel(servers = emptyList())
+            val viewModel = viewModel(DefaultsServerStore(emptyList()))
 
             advanceUntilIdle()
 
@@ -43,7 +44,7 @@ class KaloscopeViewModelDefaultsTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {
             val savedServer = server()
-            val viewModel = viewModel(servers = listOf(savedServer))
+            val viewModel = viewModel(DefaultsServerStore(listOf(savedServer)))
 
             advanceUntilIdle()
 
@@ -55,8 +56,34 @@ class KaloscopeViewModelDefaultsTest {
         }
     }
 
-    private fun viewModel(servers: List<SavedServer>) = KaloscopeViewModel(
-        serverStore = DefaultsServerStore(servers),
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `login defaults are applied after retrying failed bootstrap`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val savedServer = server()
+            val store = DefaultsServerStore(listOf(savedServer))
+            store.readFailure = IOException("Read failed")
+            val viewModel = viewModel(store)
+
+            advanceUntilIdle()
+
+            assertEquals(BootstrapState.StorageError, viewModel.bootstrapState.value)
+
+            store.readFailure = null
+            viewModel.retryBootstrap()
+            advanceUntilIdle()
+
+            assertEquals(BootstrapState.NeedsLogin(savedServer), viewModel.bootstrapState.value)
+            assertEquals("debug_user", viewModel.loginState.value.username)
+            assertEquals("debug_password", viewModel.loginState.value.password)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    private fun viewModel(serverStore: ServerStore) = KaloscopeViewModel(
+        serverStore = serverStore,
         serverRepository = DefaultsServerRepository(),
         sessionRepository = DefaultsSessionRepository(),
         formDefaults = AppFormDefaults(
@@ -71,7 +98,12 @@ class KaloscopeViewModelDefaultsTest {
 private class DefaultsServerStore(
     private val servers: List<SavedServer>,
 ) : ServerStore {
-    override suspend fun getServers(): List<SavedServer> = servers
+    var readFailure: IOException? = null
+
+    override suspend fun getServers(): List<SavedServer> {
+        readFailure?.let { throw it }
+        return servers
+    }
 
     override suspend fun getActiveServerId(): String? = servers.firstOrNull()?.id
 

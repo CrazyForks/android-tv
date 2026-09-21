@@ -52,6 +52,7 @@ fun KaloscopeApp(
         // Exactly one root subtree is composed to prevent hidden screens from retaining focus.
         when (val state = bootstrapState) {
             BootstrapState.Loading -> LoadingScreen()
+            BootstrapState.StorageError -> StorageErrorScreen(onRetry = viewModel::retryBootstrap)
             is BootstrapState.NeedsServer -> {
                 val setupState by viewModel.serverSetupState.collectAsStateWithLifecycle()
                 val deletionState by viewModel.serverDeletionState.collectAsStateWithLifecycle()
