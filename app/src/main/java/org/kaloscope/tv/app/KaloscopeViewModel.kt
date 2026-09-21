@@ -6,6 +6,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +51,7 @@ class KaloscopeViewModel @Inject constructor(
     private var loginCoordinator: LoginCoordinator? = null
     private var loginStateJob: Job? = null
     private var serverConnectionJob: Job? = null
+    private var bootstrapJob: Job? = null
 
     val bootstrapState: StateFlow<BootstrapState> = mutableBootstrapState.asStateFlow()
     val serverSetupState: StateFlow<ServerSetupState> = serverCoordinator.state
@@ -84,16 +87,17 @@ class KaloscopeViewModel @Inject constructor(
     }
 
     fun showServerSelection() {
-        viewModelScope.launch {
+        bootstrapJob?.cancel()
+        bootstrapJob = viewModelScope.launch {
             // Drop any password-bearing login state before showing another root screen.
             stopLoginCollection()
             serverConnectionJob?.cancel()
             serverConnectionJob = null
             serverCoordinator.reset()
             serverDeletionCoordinator.clearError()
-            mutableBootstrapState.value = BootstrapState.NeedsServer(
-                serverStore.getServers(),
-            )
+            val servers = serverStore.getServers()
+            currentCoroutineContext().ensureActive()
+            mutableBootstrapState.value = BootstrapState.NeedsServer(servers)
         }
     }
 
@@ -108,14 +112,18 @@ class KaloscopeViewModel @Inject constructor(
     fun clearServerDeletionError() = serverDeletionCoordinator.clearError()
 
     fun selectServer(server: SavedServer) {
-        viewModelScope.launch {
+        bootstrapJob?.cancel()
+        bootstrapJob = viewModelScope.launch {
             serverRepository.setActiveServer(server.id)
+            currentCoroutineContext().ensureActive()
             // Tokens are isolated by server ID and never reused across origins.
             val token = sessionRepository.getToken(server.id)
+            currentCoroutineContext().ensureActive()
             if (token.isNullOrBlank()) {
                 showLogin(server)
             } else {
-                retryBootstrap()
+                // Validation must remain part of the selection's cancellable job.
+                resolveBootstrap()
             }
         }
     }
@@ -140,14 +148,9 @@ class KaloscopeViewModel @Inject constructor(
     }
 
     fun retryBootstrap() {
-        viewModelScope.launch {
-            mutableBootstrapState.value = BootstrapState.Loading
-            val resolved = bootstrapCoordinator.resolve()
-            if (resolved is BootstrapState.NeedsLogin) {
-                showLogin(resolved.server)
-            } else {
-                mutableBootstrapState.value = resolved
-            }
+        bootstrapJob?.cancel()
+        bootstrapJob = viewModelScope.launch {
+            resolveBootstrap()
         }
     }
 
@@ -169,6 +172,17 @@ class KaloscopeViewModel @Inject constructor(
             return
         }
         useDifferentAccount(session.server)
+    }
+
+    private suspend fun resolveBootstrap() {
+        mutableBootstrapState.value = BootstrapState.Loading
+        val resolved = bootstrapCoordinator.resolve()
+        currentCoroutineContext().ensureActive()
+        if (resolved is BootstrapState.NeedsLogin) {
+            showLogin(resolved.server)
+        } else {
+            mutableBootstrapState.value = resolved
+        }
     }
 
     private fun showLogin(server: SavedServer) {
