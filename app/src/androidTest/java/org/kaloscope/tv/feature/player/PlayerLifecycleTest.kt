@@ -12,6 +12,7 @@ import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
@@ -33,6 +34,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.kaloscope.tv.R
 import org.kaloscope.tv.app.KaloscopeTheme
+import org.kaloscope.tv.core.model.NetworkDefinition
 import org.kaloscope.tv.core.model.NetworkPlaybackSource
 import org.kaloscope.tv.core.model.NetworkVideoType
 import org.kaloscope.tv.core.model.SavedServer
@@ -41,6 +43,7 @@ import org.kaloscope.tv.core.model.SessionUser
 import org.kaloscope.tv.core.model.SubtitleTrack
 import org.kaloscope.tv.core.player.PlaybackControllerFactory
 import org.kaloscope.tv.core.player.PlaybackRequest
+import org.kaloscope.tv.core.player.PlaybackRequestNavigator
 import org.kaloscope.tv.core.player.ProgressReason
 
 class PlayerLifecycleTest {
@@ -91,6 +94,65 @@ class PlayerLifecycleTest {
         composeRule.onNodeWithTag("player-play-pause").assertContentDescriptionEquals(
             InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.pause),
         )
+    }
+
+    @Test
+    fun changingQualityWhilePausedRetainsPositionAndStaysPaused() = withPlayer { owner ->
+        pressProgressKey(Key.Enter)
+        pressProgressKey(Key.DirectionRight)
+        composeRule.waitUntil(10_000) {
+            progress.any { it.reason == ProgressReason.Seeked && it.positionMillis >= 10_000 }
+        }
+        val pausedPosition = progress.last { it.reason == ProgressReason.Seeked }.positionMillis
+
+        selectAlternateDefinition()
+
+        assertPositionNear(pausedPosition, progress.last { it.reason == ProgressReason.Started })
+        pressProgressKey(Key.DirectionDown)
+        composeRule.onNodeWithTag("player-play-pause").assertContentDescriptionEquals(
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.play),
+        )
+        assertPositionNear(pausedPosition, Progress(stop(owner), ProgressReason.Exit))
+    }
+
+    @Test
+    fun changingQualityWhilePlayingRetainsPositionAndKeepsPlaying() = withPlayer { _ ->
+        pressProgressKey(Key.DirectionRight)
+        composeRule.waitUntil(10_000) {
+            progress.any { it.reason == ProgressReason.Seeked && it.positionMillis >= 10_000 }
+        }
+
+        selectAlternateDefinition()
+
+        assertPositionNear(
+            progress.last { it.reason == ProgressReason.Exit }.positionMillis,
+            progress.last { it.reason == ProgressReason.Started },
+        )
+        pressProgressKey(Key.DirectionDown)
+        composeRule.onNodeWithTag("player-play-pause").assertContentDescriptionEquals(
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.pause),
+        )
+    }
+
+    @Test
+    fun changingQualityWhileStoppedRetainsPausedResumeState() = withPlayer { owner ->
+        pressProgressKey(Key.Enter)
+        val stoppedPosition = stop(owner)
+        val startCount = progress.count { it.reason == ProgressReason.Started }
+        composeRule.runOnIdle {
+            request.value = requireNotNull(
+                PlaybackRequestNavigator.selectDefinition(request.value, 1, stoppedPosition),
+            )
+        }
+        composeRule.runOnIdle { owner.lifecycle.currentState = Lifecycle.State.RESUMED }
+        awaitStartAfter(startCount)
+
+        assertPositionNear(stoppedPosition, progress.last { it.reason == ProgressReason.Started })
+        pressProgressKey(Key.DirectionDown)
+        composeRule.onNodeWithTag("player-play-pause").assertContentDescriptionEquals(
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.play),
+        )
+        assertPositionNear(stoppedPosition, Progress(stop(owner), ProgressReason.Exit))
     }
 
     @Test
@@ -152,6 +214,23 @@ class PlayerLifecycleTest {
         )
     }
 
+    private fun selectAlternateDefinition() {
+        val startCount = progress.count { it.reason == ProgressReason.Started }
+        val exitCount = progress.count { it.reason == ProgressReason.Exit }
+        pressProgressKey(Key.DirectionDown)
+        composeRule.onNodeWithTag("player-quality")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+        composeRule.onNodeWithText("720p")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+        awaitStartAfter(startCount)
+        composeRule.runOnIdle {
+            assertEquals(1, request.value.source.selectedDefinitionIndex)
+            assertEquals(exitCount + 1, progress.count { it.reason == ProgressReason.Exit })
+        }
+    }
+
     private fun loadRetriedSubtitles() {
         MockWebServer().use { server ->
             server.enqueue(
@@ -211,10 +290,13 @@ class PlayerLifecycleTest {
     private fun withPlayer(block: (PlayerLifecycleOwner) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val audio = File.createTempFile("player-lifecycle-", ".wav", context.cacheDir)
+        val alternateAudio = File.createTempFile("player-quality-", ".wav", context.cacheDir)
         val visible = mutableStateOf(true)
         lateinit var owner: PlayerLifecycleOwner
         try {
-            audio.writeBytes(silentAudio())
+            val audioBytes = silentAudio()
+            audio.writeBytes(audioBytes)
+            alternateAudio.writeBytes(audioBytes)
             subtitles = mutableStateOf(emptyList())
             request = mutableStateOf(
                 PlaybackRequest.NetworkVideo(
@@ -228,6 +310,11 @@ class PlayerLifecycleTest {
                         url = Uri.fromFile(audio).toString(),
                         videoType = NetworkVideoType.Unknown,
                         danmakus = emptyList(),
+                        definitions = listOf(
+                            NetworkDefinition("1080p", Uri.fromFile(audio).toString()),
+                            NetworkDefinition("720p", Uri.fromFile(alternateAudio).toString()),
+                        ),
+                        selectedDefinitionIndex = 0,
                     ),
                     resumePositionMillis = 5_000,
                 ),
@@ -260,7 +347,13 @@ class PlayerLifecycleTest {
                                 onProgress = { _, position, _, reason ->
                                     progress += Progress(position, reason)
                                 },
-                                onSelectDefinition = { _, _ -> },
+                                onSelectDefinition = { index, position ->
+                                    PlaybackRequestNavigator.selectDefinition(
+                                        request.value,
+                                        index,
+                                        position,
+                                    )?.let { request.value = it }
+                                },
                                 onPrevious = {},
                                 onNext = {},
                                 onSelectEpisode = {},
@@ -277,6 +370,7 @@ class PlayerLifecycleTest {
             composeRule.runOnIdle { visible.value = false }
             composeRule.waitForIdle()
             audio.delete()
+            alternateAudio.delete()
         }
     }
 

@@ -143,7 +143,8 @@ private fun PlayerContent(
     var activeController by remember(playbackIdentity) {
         mutableStateOf<PlaybackController?>(null)
     }
-    var resumeState by remember(playbackIdentity) {
+    // Quality changes replace the source but retain the same item's position and pause state.
+    var resumeState by remember(state.request.playbackItemIdentity()) {
         mutableStateOf<PlaybackResumeState?>(null)
     }
     fun releaseController() {

@@ -9,9 +9,15 @@ import org.kaloscope.tv.core.player.PlaybackRequest
 
 internal fun PlaybackRequest.playbackIdentity(): String =
     when (this) {
+        is PlaybackRequest.LocalMedia -> playbackItemIdentity()
+        is PlaybackRequest.NetworkVideo -> "${playbackItemIdentity()}:${source.url}"
+    }
+
+internal fun PlaybackRequest.playbackItemIdentity(): String =
+    when (this) {
         is PlaybackRequest.LocalMedia -> "$requestId:local:$mediaId"
         is PlaybackRequest.NetworkVideo ->
-            "$requestId:network:${source.resourceId}:${source.selectedChapterIndex}:${source.url}"
+            "$requestId:network:${source.resourceId}:${source.selectedChapterIndex}"
     }
 
 internal fun playerQualityControlLabel(
