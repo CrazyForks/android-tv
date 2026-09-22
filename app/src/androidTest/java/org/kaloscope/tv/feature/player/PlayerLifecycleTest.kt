@@ -9,6 +9,8 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -55,6 +57,41 @@ class PlayerLifecycleTest {
     private val progress = CopyOnWriteArrayList<Progress>()
     private lateinit var request: MutableState<PlaybackRequest.NetworkVideo>
     private lateinit var subtitles: MutableState<List<SubtitleTrack>>
+
+    @Test
+    fun endedPlaybackRestartsWithCenterOnProgress() {
+        assertEndedPlaybackRestarts("player-progress")
+    }
+
+    @Test
+    fun endedPlaybackRestartsWithCenterOnPlayButton() {
+        assertEndedPlaybackRestarts("player-play-pause")
+    }
+
+    private fun assertEndedPlaybackRestarts(controlTag: String) =
+        withPlayer(resumePositionMillis = 59_000) { owner ->
+            pressProgressKey(Key.DirectionDown)
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodes(
+                    hasTestTag("player-play-pause") and
+                        hasContentDescription(context.getString(R.string.play)),
+                ).fetchSemanticsNodes().isNotEmpty()
+            }
+            val startCount = progress.count { it.reason == ProgressReason.Started }
+
+            composeRule.onNodeWithTag(controlTag)
+                .performSemanticsAction(SemanticsActions.RequestFocus)
+                .performKeyInput { pressKey(Key.DirectionCenter) }
+
+            awaitStartAfter(startCount)
+            assertPositionNear(0, progress.last { it.reason == ProgressReason.Started })
+            pressProgressKey(Key.DirectionDown)
+            composeRule.onNodeWithTag("player-play-pause").assertContentDescriptionEquals(
+                context.getString(R.string.pause),
+            )
+            assertTrue(stop(owner) < 10_000)
+        }
 
     @Test
     fun pausedPlaybackRestoresLatestPositionAndStaysPaused() = withPlayer { owner ->
@@ -287,7 +324,10 @@ class PlayerLifecycleTest {
         )
     }
 
-    private fun withPlayer(block: (PlayerLifecycleOwner) -> Unit) {
+    private fun withPlayer(
+        resumePositionMillis: Long = 5_000,
+        block: (PlayerLifecycleOwner) -> Unit,
+    ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val audio = File.createTempFile("player-lifecycle-", ".wav", context.cacheDir)
         val alternateAudio = File.createTempFile("player-quality-", ".wav", context.cacheDir)
@@ -316,7 +356,7 @@ class PlayerLifecycleTest {
                         ),
                         selectedDefinitionIndex = 0,
                     ),
-                    resumePositionMillis = 5_000,
+                    resumePositionMillis = resumePositionMillis,
                 ),
             )
             composeRule.runOnUiThread {

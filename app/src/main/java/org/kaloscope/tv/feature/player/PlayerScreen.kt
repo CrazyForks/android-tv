@@ -36,6 +36,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.SubtitleView
 import androidx.media3.ui.compose.ContentFrame
@@ -624,7 +625,7 @@ private fun PlayerContent(
             val controlsState = PlayerControlsUiState(
                 title = parentTitle ?: state.request.title,
                 secondaryTitle = secondaryTitle,
-                playWhenReady = status.playWhenReady,
+                playWhenReady = status.playWhenReady && status.playbackState != Player.STATE_ENDED,
                 positionMillis = seekState.displayPositionMillis,
                 bufferedPositionMillis = bufferedPositionMillis,
                 durationMillis = status.effectiveDurationMillis,

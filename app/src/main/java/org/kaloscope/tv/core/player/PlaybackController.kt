@@ -194,6 +194,12 @@ class PlaybackController internal constructor(
     }
 
     fun togglePlayPause(): Boolean {
+        if (player.playbackState == Player.STATE_ENDED) {
+            // Media3 retains play intent at the end; playing again also requires a seek.
+            seekTo(0)
+            player.play()
+            return true
+        }
         val playWhenReady = !player.playWhenReady
         if (playWhenReady) {
             player.play()
