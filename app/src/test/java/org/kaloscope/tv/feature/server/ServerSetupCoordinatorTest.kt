@@ -4,11 +4,13 @@ import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -350,6 +352,83 @@ class ServerSetupCoordinatorTest {
     }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `reset prevents a pending save from activating the old draft`() = runTest {
+        val completion = CompletableDeferred<Unit>()
+        val repository = FakeServerRepository()
+        repository.beforeSave = { completion.await() }
+        val coordinator = coordinator(repository)
+        coordinator.updateName("Old draft")
+        coordinator.updateUrl("https://old.example")
+        coordinator.testConnection()
+        var saved: SavedServer? = null
+        val save = launch { saved = coordinator.save() }
+        runCurrent()
+
+        coordinator.reset()
+        completion.complete(Unit)
+        save.join()
+
+        assertNull(saved)
+        assertNull(repository.activeServerId)
+        assertEquals(ServerSetupState(), coordinator.state.value)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `cancelled save completion cannot clear or fail a newer save`() = runTest {
+        for (failure in listOf(null, IOException("Late write failure"), CancellationException())) {
+            val oldCompletion = CompletableDeferred<Unit>()
+            val newCompletion = CompletableDeferred<Unit>()
+            val repository = FakeServerRepository()
+            repository.beforeSave = {
+                withContext(NonCancellable) { oldCompletion.await() }
+            }
+            var createdIds = 0
+            val coordinator = coordinator(repository, createServerId = { "generated-${++createdIds}" })
+            coordinator.updateName("Old draft")
+            coordinator.updateUrl("https://old.example")
+            coordinator.testConnection()
+            var oldSaveReturned = false
+            val oldSave = launch {
+                coordinator.save()
+                oldSaveReturned = true
+            }
+            runCurrent()
+
+            oldSave.cancel()
+            coordinator.reset()
+            coordinator.updateName("New draft")
+            coordinator.updateUrl("https://new.example")
+            coordinator.testConnection()
+            repository.beforeSave = { newCompletion.await() }
+            var saved: SavedServer? = null
+            val newSave = launch { saved = coordinator.save() }
+            runCurrent()
+            val savingState = coordinator.state.value
+            assertTrue(savingState.isSaving)
+
+            if (failure == null) {
+                oldCompletion.complete(Unit)
+            } else {
+                oldCompletion.completeExceptionally(failure)
+            }
+            oldSave.join()
+
+            assertFalse(oldSaveReturned)
+            assertNull(repository.activeServerId)
+            assertEquals(savingState, coordinator.state.value)
+
+            newCompletion.complete(Unit)
+            newSave.join()
+            assertEquals(SavedServer("generated-2", "New draft", "https://new.example"), saved)
+            assertEquals("generated-2", repository.activeServerId)
+            assertFalse(coordinator.state.value.isSaving)
+            assertNull(coordinator.state.value.error)
+        }
+    }
+
+    @Test
     fun `reset starts a new server without overwriting a partially saved draft`() = runTest {
         val repository = FakeServerRepository(activationError = IOException("storage unavailable"))
         var createdIds = 0
@@ -386,6 +465,7 @@ private class FakeServerRepository(
     val savedServer: SavedServer?
         get() = savedServers.lastOrNull()
     var activeServerId: String? = null
+    var beforeSave: suspend () -> Unit = {}
 
     override suspend fun testConnection(origin: String): AppResult<ServerConnectionInfo> {
         testCalls += 1
@@ -399,6 +479,7 @@ private class FakeServerRepository(
     }
 
     override suspend fun saveServer(server: SavedServer) {
+        beforeSave()
         if (failSave) {
             error("storage unavailable")
         }

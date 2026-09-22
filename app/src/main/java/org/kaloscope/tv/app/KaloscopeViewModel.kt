@@ -82,8 +82,14 @@ class KaloscopeViewModel @Inject constructor(
     }
 
     fun saveServer() {
-        viewModelScope.launch {
-            serverCoordinator.save()?.let(::showLogin)
+        if (!serverCoordinator.state.value.canSave) {
+            return
+        }
+        bootstrapJob?.cancel()
+        bootstrapJob = viewModelScope.launch {
+            val server = serverCoordinator.save() ?: return@launch
+            currentCoroutineContext().ensureActive()
+            showLogin(server)
         }
     }
 

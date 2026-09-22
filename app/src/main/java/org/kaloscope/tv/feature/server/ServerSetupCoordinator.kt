@@ -2,6 +2,8 @@ package org.kaloscope.tv.feature.server
 
 import java.net.URI
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,11 +47,13 @@ class ServerSetupCoordinator(
     )
     private val mutableState = MutableStateFlow(initialState)
     private var connectionGeneration = 0L
+    private var saveGeneration = 0L
     private var draftServerId: String? = null
     val state: StateFlow<ServerSetupState> = mutableState.asStateFlow()
 
     fun reset() {
         connectionGeneration += 1
+        saveGeneration += 1
         draftServerId = null
         mutableState.value = initialState
     }
@@ -129,6 +133,7 @@ class ServerSetupCoordinator(
             return null
         }
 
+        val requestGeneration = ++saveGeneration
         // Activation can fail after persistence, so retries must update the same server.
         val server = SavedServer(
             id = draftServerId ?: createServerId().also { draftServerId = it },
@@ -138,19 +143,29 @@ class ServerSetupCoordinator(
         mutableState.value = current.copy(isSaving = true)
         try {
             repository.saveServer(server)
+            currentCoroutineContext().ensureActive()
+            if (requestGeneration != saveGeneration) return null
             repository.setActiveServer(server.id)
-            mutableState.value = mutableState.value.copy(isSaving = false)
+            currentCoroutineContext().ensureActive()
+            if (requestGeneration != saveGeneration) return null
             return server
         } catch (error: CancellationException) {
-            mutableState.value = mutableState.value.copy(isSaving = false)
             throw error
         } catch (_: Exception) {
-            // Keep the verified draft available so the user can retry the local write.
-            mutableState.value = mutableState.value.copy(
-                isSaving = false,
-                error = ServerSetupError.SaveFailed,
-            )
+            currentCoroutineContext().ensureActive()
+            if (requestGeneration == saveGeneration) {
+                // Keep the verified draft available so the user can retry the local write.
+                mutableState.value = mutableState.value.copy(
+                    isSaving = false,
+                    error = ServerSetupError.SaveFailed,
+                )
+            }
             return null
+        } finally {
+            // A superseded save must not clear a newer draft's busy state.
+            if (requestGeneration == saveGeneration) {
+                mutableState.value = mutableState.value.copy(isSaving = false)
+            }
         }
     }
 }
