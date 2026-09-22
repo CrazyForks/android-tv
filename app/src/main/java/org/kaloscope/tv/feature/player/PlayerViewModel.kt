@@ -336,8 +336,10 @@ class PlayerViewModel @Inject constructor(
     )
 
     private fun cancelExtraRetries() {
-        extraRetryJobs.values.forEach(Job::cancel)
+        val pendingRetries = extraRetryJobs.values.toList()
+        // Cancellation may synchronously remove entries through completion callbacks.
         extraRetryJobs.clear()
+        pendingRetries.forEach(Job::cancel)
     }
 
     private fun createLocalRequest(
