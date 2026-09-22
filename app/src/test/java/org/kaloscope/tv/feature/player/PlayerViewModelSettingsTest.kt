@@ -741,25 +741,7 @@ class PlayerViewModelSettingsTest {
         try {
             val store = PlaybackRequestStore()
             val networkRepository = RecordingNetworkResourceRepository()
-            val request = PlaybackRequest.NetworkVideo(
-                requestId = "network-request",
-                serverId = "server-1",
-                title = "Episode 1",
-                source = NetworkPlaybackSource(
-                    indexerId = 7,
-                    resourceId = "series-1",
-                    title = "Episode 1",
-                    url = "https://cdn.example.test/episode-1.m3u8",
-                    videoType = NetworkVideoType.Hls,
-                    danmakus = emptyList(),
-                    chapters = listOf(
-                        NetworkChapter("episode-1", null, "Episode 1", null),
-                        NetworkChapter("episode-2", null, "Episode 2", null),
-                        NetworkChapter("episode-3", null, "Episode 3", null),
-                    ),
-                    selectedChapterIndex = 0,
-                ),
-            )
+            val request = networkRequest()
             store.put(request)
             val viewModel = PlayerViewModel(
                 requestStore = store,
@@ -778,6 +760,80 @@ class PlayerViewModelSettingsTest {
             assertEquals(2, selected.source.selectedChapterIndex)
             assertEquals("Episode 3", selected.title)
         } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `closing player discards queued network chapter authorization errors`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val store = PlaybackRequestStore()
+        val repository = RecordingNetworkResourceRepository().apply { suspendResolution = true }
+        val viewModel = PlayerViewModel(
+            requestStore = store,
+            mediaRepository = unusedMediaRepository(),
+            historyRepository = unusedHistoryRepository(),
+            networkResourceRepository = repository,
+        )
+        try {
+            val request = networkRequest()
+            store.put(request)
+            viewModel.load(session(), request.requestId)
+            runCurrent()
+            viewModel.switchAdjacent(session(), offset = 1)
+            runCurrent()
+            val switching = viewModel.uiState.value as PlayerUiState.Content
+            assertTrue(switching.switchingItem)
+            assertEquals(1, repository.requestedChapterIndex)
+
+            repository.failChapterResolution()
+            viewModel.close(request.requestId)
+            runCurrent()
+
+            assertEquals(switching, viewModel.uiState.value)
+            assertFalse(viewModel.uiState.value.hasUnauthorized())
+            assertNull(store.get(request.requestId))
+        } finally {
+            viewModel.viewModelScope.cancel()
+            runCurrent()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `active network chapter authorization failure preserves current playback`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val store = PlaybackRequestStore()
+        val repository = RecordingNetworkResourceRepository().apply { suspendResolution = true }
+        val viewModel = PlayerViewModel(
+            requestStore = store,
+            mediaRepository = unusedMediaRepository(),
+            historyRepository = unusedHistoryRepository(),
+            networkResourceRepository = repository,
+        )
+        try {
+            val request = networkRequest()
+            store.put(request)
+            viewModel.load(session(), request.requestId)
+            runCurrent()
+            val original = viewModel.uiState.value as PlayerUiState.Content
+            viewModel.selectEpisode(session(), episodeIndex = 1)
+            runCurrent()
+
+            repository.failChapterResolution()
+            runCurrent()
+
+            assertEquals(
+                original.copy(switchError = AppError.Unauthorized),
+                viewModel.uiState.value,
+            )
+            assertTrue(viewModel.uiState.value.hasUnauthorized())
+            assertEquals(request, store.get(request.requestId))
+        } finally {
+            viewModel.viewModelScope.cancel()
+            runCurrent()
             Dispatchers.resetMain()
         }
     }
@@ -1073,6 +1129,8 @@ private class PlaybackExtrasRepository(
 
 private class RecordingNetworkResourceRepository : NetworkResourceRepository {
     var requestedChapterIndex: Int? = null
+    var suspendResolution = false
+    private var pendingResolution: CancellableContinuation<NetworkPlaybackSource>? = null
 
     override suspend fun resolveResource(
         session: Session,
@@ -1088,6 +1146,11 @@ private class RecordingNetworkResourceRepository : NetworkResourceRepository {
         preferredDefinition: TranscodeResolution,
     ): AppResult<NetworkPlaybackSource> {
         requestedChapterIndex = chapterIndex
+        if (suspendResolution) {
+            return networkCall(Json) {
+                suspendCancellableCoroutine { pendingResolution = it }
+            }
+        }
         val chapter = source.chapters[chapterIndex]
         return AppResult.Success(
             source.copy(
@@ -1096,6 +1159,13 @@ private class RecordingNetworkResourceRepository : NetworkResourceRepository {
                 selectedChapterIndex = chapterIndex,
             ),
         )
+    }
+
+    fun failChapterResolution() {
+        checkNotNull(pendingResolution).resumeWithException(
+            HttpException(Response.error<Unit>(401, "".toResponseBody())),
+        )
+        pendingResolution = null
     }
 
     override suspend fun resolveReaderChapter(
@@ -1156,6 +1226,26 @@ private fun session() = Session(
     server = SavedServer("server-1", "Home", "http://127.0.0.1:8000"),
     token = "token",
     user = SessionUser(1, "tv", "user"),
+)
+
+private fun networkRequest() = PlaybackRequest.NetworkVideo(
+    requestId = "network-request",
+    serverId = "server-1",
+    title = "Episode 1",
+    source = NetworkPlaybackSource(
+        indexerId = 7,
+        resourceId = "series-1",
+        title = "Episode 1",
+        url = "https://cdn.example.test/episode-1.m3u8",
+        videoType = NetworkVideoType.Hls,
+        danmakus = emptyList(),
+        chapters = listOf(
+            NetworkChapter("episode-1", null, "Episode 1", null),
+            NetworkChapter("episode-2", null, "Episode 2", null),
+            NetworkChapter("episode-3", null, "Episode 3", null),
+        ),
+        selectedChapterIndex = 0,
+    ),
 )
 
 private fun history() = WatchHistoryItem(

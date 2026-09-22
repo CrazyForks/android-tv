@@ -265,14 +265,15 @@ class PlayerViewModel @Inject constructor(
         coordinator.beginItemSwitch()
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
-            when (
-                val result = networkResourceRepository.resolveVideoChapter(
-                    session = session,
-                    source = request.source,
-                    chapterIndex = chapterIndex,
-                    preferredDefinition = request.preferredDefinition,
-                )
-            ) {
+            val result = networkResourceRepository.resolveVideoChapter(
+                session = session,
+                source = request.source,
+                chapterIndex = chapterIndex,
+                preferredDefinition = request.preferredDefinition,
+            )
+            // A queued network exception can return as a failure after this switch is cancelled.
+            ensureActive()
+            when (result) {
                 is AppResult.Success -> coordinator.replaceRequest(
                     session,
                     request.copy(
