@@ -8,6 +8,7 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
+import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.DEFAULT_COVER_ASPECT_RATIO
 import org.kaloscope.tv.core.model.IndexerSourceProfile
@@ -45,13 +46,16 @@ class DefaultSearchRepository @Inject constructor(
                 }
             }.awaitAll()
         }
+        val failures = loads.filterIsInstance<AppResult.Failure>()
+        // Session expiry affects the whole catalog, even when other profiles loaded successfully.
+        failures.firstOrNull { it.error == AppError.Unauthorized }?.let { return it }
         val profiles = loads.mapNotNull { load ->
             (load as? AppResult.Success)?.value
         }
         if (profiles.isNotEmpty()) {
             return AppResult.Success(profiles)
         }
-        return loads.filterIsInstance<AppResult.Failure>().firstOrNull()
+        return failures.firstOrNull()
             ?: AppResult.Success(emptyList())
     }
 

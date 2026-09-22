@@ -85,6 +85,66 @@ class DefaultSearchRepositoryTest {
     }
 
     @Test
+    fun `catalog reports session expiry even when another config succeeds`() = runTest {
+        server.dispatcher = catalogDispatcher(
+            mapOf(
+                11L to CatalogSite(loginRequired = false),
+                12L to CatalogSite(loginRequired = false, configFailureCode = 401),
+            ),
+        )
+
+        val result = repository.getAvailableProfiles(session())
+
+        assertEquals(AppResult.Failure(AppError.Unauthorized), result)
+    }
+
+    @Test
+    fun `catalog reports session expiry during indexer auth lookup`() = runTest {
+        server.dispatcher = catalogDispatcher(
+            mapOf(
+                11L to CatalogSite(loginRequired = false),
+                12L to CatalogSite(loginRequired = true, authFailureCode = 401),
+            ),
+        )
+
+        val result = repository.getAvailableProfiles(session())
+
+        assertEquals(AppResult.Failure(AppError.Unauthorized), result)
+    }
+
+    @Test
+    fun `catalog session expiry takes precedence over earlier ordinary failures`() = runTest {
+        server.dispatcher = catalogDispatcher(
+            mapOf(
+                13L to CatalogSite(loginRequired = true),
+                12L to CatalogSite(loginRequired = false, configFailureCode = 403),
+                11L to CatalogSite(loginRequired = false, configFailureCode = 401),
+            ),
+        )
+
+        val result = repository.getAvailableProfiles(session())
+
+        assertEquals(AppResult.Failure(AppError.Unauthorized), result)
+    }
+
+    @Test
+    fun `catalog preserves available sites when another config is forbidden`() = runTest {
+        server.dispatcher = catalogDispatcher(
+            mapOf(
+                11L to CatalogSite(loginRequired = false),
+                12L to CatalogSite(loginRequired = false, configFailureCode = 403),
+            ),
+        )
+
+        val result = repository.getAvailableProfiles(session())
+
+        assertEquals(
+            listOf(11L),
+            (result as AppResult.Success).value.map { it.indexer.id },
+        )
+    }
+
+    @Test
     fun `catalog keeps source order across hidden and failed profiles`() = runTest {
         server.dispatcher = catalogDispatcher(
             mapOf(
@@ -326,6 +386,9 @@ class DefaultSearchRepositoryTest {
                     """.trimIndent(),
                 )
 
+                path.endsWith("/auth") && site.authFailureCode != null ->
+                    MockResponse().setResponseCode(site.authFailureCode)
+
                 path.endsWith("/auth") -> {
                     val data = site.authName?.let { """{"name":"$it"}""" } ?: "null"
                     jsonResponse("""{"status":200,"message":"","data":$data}""")
@@ -341,6 +404,7 @@ private data class CatalogSite(
     val loginRequired: Boolean,
     val authName: String? = null,
     val configFailureCode: Int? = null,
+    val authFailureCode: Int? = null,
     val mediaType: String? = null,
     val videoType: String? = null,
 )
