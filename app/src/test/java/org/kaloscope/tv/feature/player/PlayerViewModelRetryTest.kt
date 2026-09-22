@@ -123,6 +123,7 @@ class PlayerViewModelRetryTest {
 
         assertEquals(repository.startedRetries, repository.cancelledRetries)
         assertNull(requestStore.get(request.requestId))
+        assertEquals(PlayerUiState.Loading(), viewModel.uiState.value)
     }
 }
 

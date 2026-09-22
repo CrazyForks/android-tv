@@ -53,7 +53,7 @@ class PlayerCoordinator(
 
     val state: StateFlow<PlayerUiState> = mutableState.asStateFlow()
 
-    fun beginLoad() {
+    fun reset() {
         progressErrorMediaId = null
         mutableState.value = PlayerUiState.Loading()
     }
@@ -62,7 +62,7 @@ class PlayerCoordinator(
         session: Session,
         requestId: String,
     ) {
-        beginLoad()
+        reset()
         val request = requestStore.get(requestId)
         if (request == null || request.serverId != session.server.id) {
             mutableState.value = PlayerUiState.MissingRequest

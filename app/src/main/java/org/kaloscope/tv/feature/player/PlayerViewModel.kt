@@ -118,7 +118,7 @@ class PlayerViewModel @Inject constructor(
         cancelExtraRetries()
         currentRequestId = requestId
         loadJob?.cancel()
-        coordinator.beginLoad()
+        coordinator.reset()
         loadJob = viewModelScope.launch {
             coordinator.load(session, requestId)
         }
@@ -329,6 +329,8 @@ class PlayerViewModel @Inject constructor(
         progressScope = createProgressScope()
         progressJobs.clear()
         requestStore.clearServer(serverId)
+        // The root must not reuse this server's playback errors for the next session.
+        coordinator.reset()
     }
 
     private fun createProgressScope(): CoroutineScope = CoroutineScope(

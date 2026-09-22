@@ -14,8 +14,10 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.kaloscope.tv.app.hasUnauthorized
 import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.DanmakuComment
@@ -488,6 +490,86 @@ class PlayerViewModelSettingsTest {
             assertEquals(initial.copy(progressError = AppError.Timeout), viewModel.uiState.value)
             assertEquals(1, savedCallbacks)
             assertEquals(listOf(10L, 30L, 50L), historyRepository.recordedPositions)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `clearing server removes extra authorization errors before signing in again`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val store = PlaybackRequestStore()
+            val mediaRepository = PlaybackExtrasRepository(
+                subtitleResult = AppResult.Failure(AppError.Unauthorized),
+            )
+            val viewModel = PlayerViewModel(
+                requestStore = store,
+                mediaRepository = mediaRepository,
+                historyRepository = unusedHistoryRepository(),
+                networkResourceRepository = unusedNetworkResourceRepository(),
+            )
+            val requestId = checkNotNull(viewModel.createFromHistory(session(), history()))
+            viewModel.load(session(), requestId)
+            advanceUntilIdle()
+            assertTrue(viewModel.uiState.value.hasUnauthorized())
+
+            viewModel.clearServer(session().server.id)
+
+            assertFalse(viewModel.uiState.value.hasUnauthorized())
+            assertEquals(PlayerUiState.Loading(), viewModel.uiState.value)
+            assertNull(store.get(requestId))
+
+            mediaRepository.subtitleResult = AppResult.Success(emptyList())
+            val renewedSession = session().copy(token = "renewed-test-token")
+            val newRequestId = checkNotNull(viewModel.createFromHistory(renewedSession, history()))
+            viewModel.load(renewedSession, newRequestId)
+            advanceUntilIdle()
+
+            val content = viewModel.uiState.value as PlayerUiState.Content
+            assertEquals(newRequestId, content.request.requestId)
+            assertFalse(viewModel.uiState.value.hasUnauthorized())
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `clearing server removes progress authorization errors`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val store = PlaybackRequestStore()
+            val historyRepository = RecordingHistoryRepository().apply {
+                result = AppResult.Failure(AppError.Unauthorized)
+            }
+            val viewModel = PlayerViewModel(
+                requestStore = store,
+                mediaRepository = PlaybackExtrasRepository(),
+                historyRepository = historyRepository,
+                networkResourceRepository = unusedNetworkResourceRepository(),
+            )
+            val requestId = checkNotNull(viewModel.createFromHistory(session(), history()))
+            val request = store.get(requestId) as PlaybackRequest.LocalMedia
+            viewModel.load(session(), requestId)
+            advanceUntilIdle()
+            viewModel.recordProgress(
+                session(),
+                request,
+                positionMillis = 10_000,
+                durationMillis = 60_000,
+                reason = ProgressReason.Paused,
+                nowMillis = 0,
+            )
+            advanceUntilIdle()
+            assertTrue(viewModel.uiState.value.hasUnauthorized())
+
+            viewModel.clearServer(session().server.id)
+
+            assertFalse(viewModel.uiState.value.hasUnauthorized())
+            assertEquals(PlayerUiState.Loading(), viewModel.uiState.value)
+            assertNull(store.get(requestId))
         } finally {
             Dispatchers.resetMain()
         }
