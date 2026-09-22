@@ -1,11 +1,15 @@
 package org.kaloscope.tv.feature.player
 
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
@@ -277,6 +281,159 @@ class PlayerViewModelSettingsTest {
             advanceUntilIdle()
 
             assertEquals(listOf(10L, 20L), historyRepository.completedPositions)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `clearing server cancels running and queued progress writes`() = runTest {
+        // Resume waiting writes immediately to expose cancellation-order races.
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            val store = PlaybackRequestStore()
+            val historyRepository = SequencedHistoryRepository()
+            val viewModel = PlayerViewModel(
+                requestStore = store,
+                mediaRepository = unusedMediaRepository(),
+                historyRepository = historyRepository,
+                networkResourceRepository = unusedNetworkResourceRepository(),
+            )
+            val requestId = checkNotNull(viewModel.createFromHistory(session(), history()))
+            val request = store.get(requestId) as PlaybackRequest.LocalMedia
+            var oldSavedCallbacks = 0
+            for (position in listOf(10_000L, 20_000L, 30_000L)) {
+                viewModel.recordProgress(
+                    session(),
+                    request,
+                    positionMillis = position,
+                    durationMillis = 60_000,
+                    reason = ProgressReason.Seeked,
+                    nowMillis = position,
+                    onSaved = { oldSavedCallbacks += 1 },
+                )
+            }
+            runCurrent()
+            assertEquals(listOf(10L), historyRepository.startedPositions)
+
+            viewModel.clearServer(session().server.id)
+            advanceUntilIdle()
+
+            assertEquals(0, oldSavedCallbacks)
+            assertTrue(historyRepository.completedPositions.isEmpty())
+            assertEquals(listOf(10L), historyRepository.startedPositions)
+
+            val newSession = session().copy(
+                server = SavedServer("other-server", "Other server", "https://other.example"),
+            )
+            val nextRequestId = checkNotNull(viewModel.createFromHistory(newSession, history()))
+            val nextRequest = store.get(nextRequestId) as PlaybackRequest.LocalMedia
+            var newSavedCallbacks = 0
+            viewModel.recordProgress(
+                newSession,
+                nextRequest,
+                positionMillis = 40_000,
+                durationMillis = 60_000,
+                reason = ProgressReason.Started,
+                nowMillis = 40_000,
+                onSaved = { newSavedCallbacks += 1 },
+            )
+            advanceUntilIdle()
+
+            assertEquals(listOf(40L), historyRepository.completedPositions)
+            assertEquals(1, newSavedCallbacks)
+            assertEquals(0, oldSavedCallbacks)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `closing player keeps running and final progress writes`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val store = PlaybackRequestStore()
+            val historyRepository = SequencedHistoryRepository()
+            val viewModel = PlayerViewModel(
+                requestStore = store,
+                mediaRepository = PlaybackExtrasRepository(),
+                historyRepository = historyRepository,
+                networkResourceRepository = unusedNetworkResourceRepository(),
+            )
+            val requestId = checkNotNull(viewModel.createFromHistory(session(), history()))
+            val request = store.get(requestId) as PlaybackRequest.LocalMedia
+            viewModel.load(session(), requestId)
+            advanceUntilIdle()
+            var savedCallbacks = 0
+            viewModel.recordProgress(
+                session(),
+                request,
+                positionMillis = 10_000,
+                durationMillis = 60_000,
+                reason = ProgressReason.Started,
+                nowMillis = 0,
+                onSaved = { savedCallbacks += 1 },
+            )
+            runCurrent()
+            assertEquals(listOf(10L), historyRepository.startedPositions)
+
+            viewModel.close(requestId)
+            viewModel.recordProgress(
+                session(),
+                request,
+                positionMillis = 20_000,
+                durationMillis = 60_000,
+                reason = ProgressReason.Exit,
+                nowMillis = 1_000,
+                onSaved = { savedCallbacks += 1 },
+            )
+            advanceUntilIdle()
+
+            assertEquals(listOf(10L, 20L), historyRepository.completedPositions)
+            assertEquals(2, savedCallbacks)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `view model cancellation stops running and queued progress writes`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            val store = PlaybackRequestStore()
+            val historyRepository = SequencedHistoryRepository()
+            val viewModel = PlayerViewModel(
+                requestStore = store,
+                mediaRepository = unusedMediaRepository(),
+                historyRepository = historyRepository,
+                networkResourceRepository = unusedNetworkResourceRepository(),
+            )
+            val requestId = checkNotNull(viewModel.createFromHistory(session(), history()))
+            val request = store.get(requestId) as PlaybackRequest.LocalMedia
+            var savedCallbacks = 0
+            for (position in listOf(10_000L, 20_000L)) {
+                viewModel.recordProgress(
+                    session(),
+                    request,
+                    positionMillis = position,
+                    durationMillis = 60_000,
+                    reason = ProgressReason.Seeked,
+                    nowMillis = position,
+                    onSaved = { savedCallbacks += 1 },
+                )
+            }
+            runCurrent()
+            assertEquals(listOf(10L), historyRepository.startedPositions)
+
+            viewModel.viewModelScope.cancel()
+            advanceUntilIdle()
+
+            assertTrue(historyRepository.completedPositions.isEmpty())
+            assertEquals(listOf(10L), historyRepository.startedPositions)
+            assertEquals(0, savedCallbacks)
         } finally {
             Dispatchers.resetMain()
         }
@@ -608,6 +765,7 @@ private class RecordingHistoryRepository : HistoryRepository {
 }
 
 private class SequencedHistoryRepository : HistoryRepository {
+    val startedPositions = mutableListOf<Long>()
     val completedPositions = mutableListOf<Long>()
 
     override suspend fun getRecentVideos(
@@ -620,6 +778,7 @@ private class SequencedHistoryRepository : HistoryRepository {
         positionSeconds: Long,
         percentage: Int,
     ): AppResult<Unit> {
+        startedPositions += positionSeconds
         if (positionSeconds == 10L) {
             delay(100)
         }

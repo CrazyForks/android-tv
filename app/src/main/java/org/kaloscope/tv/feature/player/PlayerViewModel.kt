@@ -5,7 +5,11 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.kaloscope.tv.core.model.MediaDetail
@@ -36,6 +40,8 @@ class PlayerViewModel @Inject constructor(
     private var currentRequestId: String? = null
     private var loadJob: Job? = null
     private val progressRecorders = mutableMapOf<Long, PlaybackProgressRecorder>()
+    // The queue tail alone cannot cancel earlier writes still running or waiting.
+    private var progressScope = createProgressScope()
     private val progressJobs = mutableMapOf<Long, Job>()
     private val extraRetryJobs = mutableMapOf<PlayerExtra, Job>()
 
@@ -151,15 +157,19 @@ class PlayerViewModel @Inject constructor(
             0
         }
         val previousWrite = progressJobs[localRequest.mediaId]
-        progressJobs[localRequest.mediaId] = viewModelScope.launch {
+        val writeScope = progressScope
+        progressJobs[localRequest.mediaId] = writeScope.launch {
             // Preserve playback order so a slow older request cannot overwrite newer progress.
             previousWrite?.join()
+            // Cancellation can resume this join before reaching every child in the scope.
+            writeScope.ensureActive()
             val result = historyRepository.recordVideoProgress(
                 session = session,
                 mediaId = localRequest.mediaId,
                 positionSeconds = positionSeconds,
                 percentage = percentage,
             )
+            writeScope.ensureActive()
             when (result) {
                 is AppResult.Failure -> {
                     recorder.recordFailed(attemptId)
@@ -315,10 +325,15 @@ class PlayerViewModel @Inject constructor(
         loadJob = null
         currentRequestId = null
         progressRecorders.clear()
-        progressJobs.values.forEach(Job::cancel)
+        progressScope.cancel()
+        progressScope = createProgressScope()
         progressJobs.clear()
         requestStore.clearServer(serverId)
     }
+
+    private fun createProgressScope(): CoroutineScope = CoroutineScope(
+        viewModelScope.coroutineContext + SupervisorJob(viewModelScope.coroutineContext[Job]),
+    )
 
     private fun cancelExtraRetries() {
         extraRetryJobs.values.forEach(Job::cancel)
