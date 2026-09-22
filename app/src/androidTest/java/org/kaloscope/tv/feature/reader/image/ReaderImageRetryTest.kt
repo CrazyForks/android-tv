@@ -3,6 +3,7 @@ package org.kaloscope.tv.feature.reader.image
 import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.focus.FocusRequester
@@ -35,6 +36,8 @@ class ReaderImageRetryTest {
 
     private val manualRetryRevision = mutableIntStateOf(0)
     private val failedImagesAvailable = mutableStateOf(false)
+    private val contentRevision = mutableLongStateOf(0L)
+    private val controlsVisible = mutableStateOf(false)
 
     @Test
     fun automaticRetryReloadsTheSameUrlAfterFailure() {
@@ -99,7 +102,61 @@ class ReaderImageRetryTest {
         }
     }
 
-    private fun setReader(server: MockWebServer, path: String) {
+    @Test
+    fun chapterChangeRestartsFailedImageInPagedMode() {
+        assertChapterChangeRestartsFailedImage(ImageReadMode.Paged)
+    }
+
+    @Test
+    fun chapterChangeRestartsFailedImageInScrollMode() {
+        assertChapterChangeRestartsFailedImage(ImageReadMode.Scroll)
+    }
+
+    private fun assertChapterChangeRestartsFailedImage(readMode: ImageReadMode) {
+        val loadingTag = when (readMode) {
+            ImageReadMode.Paged -> "reader-image-current-loading"
+            ImageReadMode.Scroll -> "reader-image-0-loading"
+        }
+        MockWebServer().use { server ->
+            repeat(8) { server.enqueue(MockResponse().setResponseCode(500)) }
+            server.start()
+            setReader(server, "/shared-chapter-image.png", readMode)
+
+            composeRule.waitUntil(10_000) { failedImagesAvailable.value }
+            composeRule.onNodeWithTag("reader-image-failed").assertIsDisplayed()
+            assertEquals(4, server.requestCount)
+            assertRequests(server, "/shared-chapter-image.png", count = 4)
+
+            composeRule.runOnIdle { controlsVisible.value = true }
+            composeRule.onNodeWithTag("reader-image-failed").assertIsDisplayed()
+            assertNull(server.takeRequest(1, TimeUnit.SECONDS))
+
+            composeRule.runOnIdle {
+                contentRevision.longValue += 1
+                // ReaderScreen also clears its retry availability when the chapter changes.
+                failedImagesAvailable.value = false
+            }
+
+            composeRule.waitUntil(10_000) {
+                server.requestCount == 8 && failedImagesAvailable.value
+            }
+            composeRule.onNodeWithTag("reader-image-failed").assertIsDisplayed()
+            composeRule.onNodeWithTag(loadingTag).assertDoesNotExist()
+            assertRequests(server, "/shared-chapter-image.png", count = 4)
+
+            server.enqueue(imageResponse())
+            composeRule.runOnIdle { manualRetryRevision.intValue += 1 }
+
+            awaitImageLoaded(server, expectedRequests = 9, loadingTag = loadingTag)
+            assertRequests(server, "/shared-chapter-image.png", count = 1)
+        }
+    }
+
+    private fun setReader(
+        server: MockWebServer,
+        path: String,
+        readMode: ImageReadMode = ImageReadMode.Paged,
+    ) {
         val session = Session(
             server = SavedServer("fixture-server", "Test", server.url("/").toString()),
             token = "fixture-token",
@@ -117,11 +174,11 @@ class ReaderImageRetryTest {
                 ImageReaderSurface(
                     session = session,
                     content = content,
-                    settings = ImageReaderSettings(readMode = ImageReadMode.Paged),
-                    contentRevision = 0,
+                    settings = ImageReaderSettings(readMode = readMode),
+                    contentRevision = contentRevision.longValue,
                     imagesExhausted = true,
                     isLoadingMore = false,
-                    controlsVisible = false,
+                    controlsVisible = controlsVisible.value,
                     focusRequester = remember { FocusRequester() },
                     onToggleControls = {},
                     onEnterControls = {},
@@ -135,10 +192,14 @@ class ReaderImageRetryTest {
         }
     }
 
-    private fun awaitImageLoaded(server: MockWebServer, expectedRequests: Int) {
+    private fun awaitImageLoaded(
+        server: MockWebServer,
+        expectedRequests: Int,
+        loadingTag: String = "reader-image-current-loading",
+    ) {
         composeRule.waitUntil(10_000) {
             server.requestCount >= expectedRequests &&
-                composeRule.onAllNodesWithTag("reader-image-current-loading")
+                composeRule.onAllNodesWithTag(loadingTag)
                     .fetchSemanticsNodes().isEmpty()
         }
         composeRule.onNodeWithContentDescription("Retry fixture").assertIsDisplayed()

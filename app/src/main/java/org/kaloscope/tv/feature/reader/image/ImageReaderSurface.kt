@@ -368,25 +368,28 @@ private fun ScrollingImages(
             items = content.images,
             key = { index, url -> "$index:$url" },
         ) { index, url ->
-            ReaderRemoteImage(
-                session = session,
-                url = url,
-                contentDescription = content.title,
-                zoomMode = settings.zoomMode,
-                horizontalBias = horizontalBias,
-                manualRetryRevision = manualRetryRevision,
-                onFinalFailureChanged = onFinalFailureChanged,
-                viewportHeight = viewportHeight,
-                loadingTestTag = "reader-image-$index-loading",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("reader-image-$index")
-                    .onSizeChanged { size ->
-                        if (size.height > 0 && imageHeights[index] != size.height) {
-                            imageHeights[index] = size.height
-                        }
-                    },
-            )
+            // A chapter may reuse the same URL after the previous chapter exhausted its retries.
+            key(contentRevision) {
+                ReaderRemoteImage(
+                    session = session,
+                    url = url,
+                    contentDescription = content.title,
+                    zoomMode = settings.zoomMode,
+                    horizontalBias = horizontalBias,
+                    manualRetryRevision = manualRetryRevision,
+                    onFinalFailureChanged = onFinalFailureChanged,
+                    viewportHeight = viewportHeight,
+                    loadingTestTag = "reader-image-$index-loading",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("reader-image-$index")
+                        .onSizeChanged { size ->
+                            if (size.height > 0 && imageHeights[index] != size.height) {
+                                imageHeights[index] = size.height
+                            }
+                        },
+                )
+            }
         }
         if (isLoadingMore) {
             item(key = LOADING_MORE_ITEM_KEY) {
@@ -525,18 +528,21 @@ private fun PagedImages(
                     fontSize = 22.sp,
                 )
             } else {
-                ReaderRemoteImage(
-                    session = session,
-                    url = url,
-                    contentDescription = content.title,
-                    zoomMode = settings.zoomMode,
-                    horizontalBias = 0f,
-                    manualRetryRevision = manualRetryRevision,
-                    onFinalFailureChanged = onFinalFailureChanged,
-                    viewportHeight = Dp.Unspecified,
-                    loadingTestTag = "reader-image-current-loading",
-                    modifier = Modifier.fillMaxSize(),
-                )
+                // Reset image state with the chapter's failure registry, even when the URL repeats.
+                key(contentRevision) {
+                    ReaderRemoteImage(
+                        session = session,
+                        url = url,
+                        contentDescription = content.title,
+                        zoomMode = settings.zoomMode,
+                        horizontalBias = 0f,
+                        manualRetryRevision = manualRetryRevision,
+                        onFinalFailureChanged = onFinalFailureChanged,
+                        viewportHeight = Dp.Unspecified,
+                        loadingTestTag = "reader-image-current-loading",
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
         }
     }
