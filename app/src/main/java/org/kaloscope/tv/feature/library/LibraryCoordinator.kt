@@ -1,5 +1,7 @@
 package org.kaloscope.tv.feature.library
 
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -71,7 +73,10 @@ class LibraryCoordinator(
 
     suspend fun load(session: Session) {
         mutableState.value = LibraryUiState.Loading
-        when (val result = repository.getLibraries(session)) {
+        val result = repository.getLibraries(session)
+        // A cancelled request can still return a result that belongs to the previous source.
+        currentCoroutineContext().ensureActive()
+        when (result) {
             is AppResult.Failure -> mutableState.value = LibraryUiState.Error(result.error)
             is AppResult.Success -> {
                 val libraries = result.value
@@ -143,14 +148,14 @@ class LibraryCoordinator(
             ),
         )
         val nextPage = currentItems.pageNumber + 1
-        when (
-            val result = repository.getMediaPage(
-                session = session,
-                libraryId = content.selectedLibraryId,
-                pageNumber = nextPage,
-                keyword = content.submittedKeyword.takeIf(String::isNotBlank),
-            )
-        ) {
+        val result = repository.getMediaPage(
+            session = session,
+            libraryId = content.selectedLibraryId,
+            pageNumber = nextPage,
+            keyword = content.submittedKeyword.takeIf(String::isNotBlank),
+        )
+        currentCoroutineContext().ensureActive()
+        when (result) {
             is AppResult.Failure -> updateContent {
                 copy(
                     items = currentItems.copy(
@@ -192,13 +197,13 @@ class LibraryCoordinator(
 
     private suspend fun loadFirstPage(session: Session) {
         val content = mutableState.value as? LibraryUiState.Content ?: return
-        when (
-            val result = repository.getMediaPage(
-                session = session,
-                libraryId = content.selectedLibraryId,
-                keyword = content.submittedKeyword.takeIf(String::isNotBlank),
-            )
-        ) {
+        val result = repository.getMediaPage(
+            session = session,
+            libraryId = content.selectedLibraryId,
+            keyword = content.submittedKeyword.takeIf(String::isNotBlank),
+        )
+        currentCoroutineContext().ensureActive()
+        when (result) {
             is AppResult.Failure -> updateContent {
                 copy(items = LibraryItemsState.Error(result.error))
             }

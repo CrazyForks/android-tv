@@ -4,18 +4,22 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
+import org.kaloscope.tv.core.model.GridViewportSnapshot
 import org.kaloscope.tv.core.model.MediaLibrary
 import org.kaloscope.tv.core.model.MediaLibraryType
 import org.kaloscope.tv.core.model.MediaPage
@@ -40,6 +44,8 @@ class LibraryViewModelTest {
 
     @After
     fun tearDown() {
+        repository.pendingLibraries?.cancel()
+        repository.requests.forEach { it.result.cancel() }
         viewModel.reset()
         dispatcher.scheduler.runCurrent()
         Dispatchers.resetMain()
@@ -142,6 +148,98 @@ class LibraryViewModelTest {
     }
 
     @Test
+    fun `late first page cannot replace the newly selected library`() = runTest(dispatcher) {
+        repository.completePageAfterCancellation = true
+        viewModel.load(session())
+        runCurrent()
+        val oldPage = repository.requests.single()
+
+        repository.completePageAfterCancellation = false
+        viewModel.selectLibrary(session(), 22)
+        runCurrent()
+        repository.requests.last().result.complete(AppResult.Success(page(501)))
+        runCurrent()
+        viewModel.rememberFocusedMedia(501)
+        viewModel.rememberGridViewport(GridViewportSnapshot(0, 24))
+        val selectedState = viewModel.uiState.value
+
+        oldPage.result.complete(AppResult.Success(page(201)))
+        runCurrent()
+
+        assertEquals(selectedState, viewModel.uiState.value)
+        assertEquals(listOf(21L, 22L), repository.requests.map { it.libraryId })
+    }
+
+    @Test
+    fun `late pagination failure cannot replace the new search results`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page(201, hasNext = true)))
+        runCurrent()
+        repository.completePageAfterCancellation = true
+        viewModel.loadNext(session())
+        runCurrent()
+        val oldPage = repository.requests.last()
+
+        repository.completePageAfterCancellation = false
+        viewModel.updateQuery("new query")
+        viewModel.search(session())
+        runCurrent()
+        repository.requests.last().result.complete(AppResult.Success(page(501)))
+        runCurrent()
+        viewModel.rememberFocusedMedia(501)
+        viewModel.rememberGridViewport(GridViewportSnapshot(0, 24))
+        val searchState = viewModel.uiState.value
+
+        oldPage.result.complete(AppResult.Failure(AppError.Unauthorized))
+        runCurrent()
+
+        assertEquals(searchState, viewModel.uiState.value)
+        assertEquals(listOf(1, 2, 1), repository.requests.map { it.pageNumber })
+    }
+
+    @Test
+    fun `late library list failure cannot replace another server's content`() = runTest(dispatcher) {
+        val oldLibraries = CompletableDeferred<AppResult<List<MediaLibrary>>>()
+        repository.pendingLibraries = oldLibraries
+        viewModel.load(session())
+        runCurrent()
+
+        repository.pendingLibraries = null
+        val newSession = session().copy(
+            server = SavedServer("other-server", "Other server", "https://other.example"),
+        )
+        viewModel.load(newSession)
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page(501)))
+        runCurrent()
+        val currentState = viewModel.uiState.value
+
+        oldLibraries.complete(AppResult.Failure(AppError.Unauthorized))
+        runCurrent()
+
+        assertEquals(currentState, viewModel.uiState.value)
+        assertEquals(1, repository.requests.size)
+    }
+
+    @Test
+    fun `reset discards a late library list without requesting its first page`() = runTest(dispatcher) {
+        val oldLibraries = CompletableDeferred<AppResult<List<MediaLibrary>>>()
+        repository.pendingLibraries = oldLibraries
+        viewModel.load(session())
+        runCurrent()
+
+        viewModel.reset()
+        oldLibraries.complete(
+            AppResult.Success(listOf(MediaLibrary(21, "Old library", MediaLibraryType.Movie))),
+        )
+        runCurrent()
+
+        assertEquals(LibraryUiState.Loading, viewModel.uiState.value)
+        assertTrue(repository.requests.isEmpty())
+    }
+
+    @Test
     fun `selecting another library cancels the pending request`() = runTest(dispatcher) {
         viewModel.load(session())
         runCurrent()
@@ -165,14 +263,18 @@ class LibraryViewModelTest {
 
 private class PendingLibraryRepository : StubMediaRepository() {
     val requests = mutableListOf<PendingMediaPage>()
+    var completePageAfterCancellation = false
+    var pendingLibraries: CompletableDeferred<AppResult<List<MediaLibrary>>>? = null
 
-    override suspend fun getLibraries(session: Session): AppResult<List<MediaLibrary>> =
-        AppResult.Success(
+    override suspend fun getLibraries(session: Session): AppResult<List<MediaLibrary>> {
+        pendingLibraries?.let { return withContext(NonCancellable) { it.await() } }
+        return AppResult.Success(
             listOf(
                 MediaLibrary(21, "剧集库", MediaLibraryType.TvShow),
                 MediaLibrary(22, "电影库", MediaLibraryType.Movie),
             ),
         )
+    }
 
     override suspend fun getMediaPage(
         session: Session,
@@ -184,7 +286,11 @@ private class PendingLibraryRepository : StubMediaRepository() {
         val request = PendingMediaPage(libraryId, pageNumber)
         requests += request
         return try {
-            request.result.await()
+            if (completePageAfterCancellation) {
+                withContext(NonCancellable) { request.result.await() }
+            } else {
+                request.result.await()
+            }
         } catch (error: CancellationException) {
             request.cancelled = true
             throw error
