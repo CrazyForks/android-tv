@@ -96,9 +96,14 @@ class KaloscopeViewModel @Inject constructor(
             serverConnectionJob = null
             serverCoordinator.reset()
             serverDeletionCoordinator.clearError()
-            val servers = serverStore.getServers()
-            currentCoroutineContext().ensureActive()
-            mutableBootstrapState.value = BootstrapState.NeedsServer(servers)
+            try {
+                val servers = serverStore.getServers()
+                currentCoroutineContext().ensureActive()
+                mutableBootstrapState.value = BootstrapState.NeedsServer(servers)
+            } catch (_: IOException) {
+                currentCoroutineContext().ensureActive()
+                mutableBootstrapState.value = BootstrapState.ServerListError
+            }
         }
     }
 

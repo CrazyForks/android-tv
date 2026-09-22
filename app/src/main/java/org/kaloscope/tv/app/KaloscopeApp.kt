@@ -59,6 +59,11 @@ fun KaloscopeApp(
                 description = stringResource(R.string.bootstrap_storage_error_description),
                 onRetry = viewModel::retryBootstrap,
             )
+            BootstrapState.ServerListError -> StorageErrorScreen(
+                title = stringResource(R.string.server_list_error_title),
+                description = stringResource(R.string.server_list_error_description),
+                onRetry = viewModel::showServerSelection,
+            )
             is BootstrapState.ServerSelectionError -> StorageErrorScreen(
                 title = stringResource(R.string.server_selection_error_title),
                 description = stringResource(R.string.server_selection_error_server, state.server.name),

@@ -66,6 +66,30 @@ class StorageErrorScreenTest {
     }
 
     @Test
+    fun serverListErrorShowsTheFailedOperationAndFocusesRetry() {
+        var retries = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                StorageErrorScreen(
+                    title = stringResource(R.string.server_list_error_title),
+                    description = stringResource(R.string.server_list_error_description),
+                    onRetry = { retries += 1 },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("无法加载服务器列表").assertIsDisplayed()
+        composeRule.onNodeWithText("无法读取已保存的服务器，请稍后重试。")
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("重试")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.runOnIdle {
+            assertEquals(1, retries)
+        }
+    }
+
+    @Test
     fun selectionErrorIdentifiesTheServerAndFocusesRetry() {
         var retries = 0
         composeRule.setContent {

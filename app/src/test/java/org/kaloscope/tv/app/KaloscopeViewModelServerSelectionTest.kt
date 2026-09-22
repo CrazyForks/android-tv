@@ -27,6 +27,7 @@ import org.kaloscope.tv.core.storage.ServerStore
 import org.kaloscope.tv.data.auth.SessionRepository
 import org.kaloscope.tv.data.server.ServerConnectionInfo
 import org.kaloscope.tv.data.server.ServerRepository
+import org.kaloscope.tv.feature.login.LoginState
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class KaloscopeViewModelServerSelectionTest {
@@ -53,12 +54,97 @@ class KaloscopeViewModelServerSelectionTest {
 
     @After
     fun tearDown() {
+        data.serverListReadFailure = null
+        data.pendingServerListRead?.result?.cancel()
+        data.pendingServerListRead = null
         data.pendingActivations.values.forEach { it.result.cancel() }
         data.pendingTokenReads.values.forEach { it.result.cancel() }
         data.pendingValidations.values.forEach { it.result.cancel() }
         viewModel.showServerSelection()
         dispatcher.scheduler.runCurrent()
         Dispatchers.resetMain()
+    }
+
+    @Test
+    fun `failed server list read clears login input and retries the saved list`() =
+        runTest(dispatcher) {
+            viewModel.selectServer(firstServer)
+            runCurrent()
+            viewModel.updateUsername("tv_user")
+            viewModel.updatePassword("test-password")
+            data.tokens[secondServer.id] = "second-token"
+            data.serverListReadFailure = IOException("Read failed")
+
+            viewModel.showServerSelection()
+            runCurrent()
+
+            assertEquals(BootstrapState.ServerListError, viewModel.bootstrapState.value)
+            assertEquals(LoginState(), viewModel.loginState.value)
+            assertEquals("second-token", data.tokens[secondServer.id])
+
+            data.serverListReadFailure = null
+            viewModel.showServerSelection()
+            runCurrent()
+
+            assertEquals(
+                BootstrapState.NeedsServer(listOf(firstServer, secondServer)),
+                viewModel.bootstrapState.value,
+            )
+            assertEquals(firstServer.id, data.activeId)
+            assertEquals("second-token", data.tokens[secondServer.id])
+            assertTrue(data.validatedServerIds.isEmpty())
+        }
+
+    @Test
+    fun `retrying server list failure from a session opens the list without revalidating`() =
+        runTest(dispatcher) {
+            data.tokens[secondServer.id] = "second-token"
+            viewModel.selectServer(secondServer)
+            runCurrent()
+            assertEquals(
+                BootstrapState.Ready(selectionSession(secondServer, "second-token")),
+                viewModel.bootstrapState.value,
+            )
+            data.serverListReadFailure = IOException("Read failed")
+
+            viewModel.showServerSelection()
+            runCurrent()
+
+            assertEquals(BootstrapState.ServerListError, viewModel.bootstrapState.value)
+            assertEquals("second-token", data.tokens[secondServer.id])
+
+            data.serverListReadFailure = null
+            viewModel.showServerSelection()
+            runCurrent()
+
+            assertEquals(
+                BootstrapState.NeedsServer(listOf(firstServer, secondServer)),
+                viewModel.bootstrapState.value,
+            )
+            assertEquals(secondServer.id, data.activeId)
+            assertEquals("second-token", data.tokens[secondServer.id])
+            assertEquals(listOf(secondServer.id), data.validatedServerIds)
+        }
+
+    @Test
+    fun `late server list failure cannot replace a newer session`() = runTest(dispatcher) {
+        val listRead = PendingSelectionResult<List<SavedServer>>(completeAfterCancellation = true)
+        data.pendingServerListRead = listRead
+        viewModel.showServerSelection()
+        runCurrent()
+
+        data.pendingServerListRead = null
+        data.tokens[secondServer.id] = "second-token"
+        viewModel.selectServer(secondServer)
+        runCurrent()
+        listRead.result.completeExceptionally(IOException("Late read failure"))
+        runCurrent()
+
+        assertEquals(
+            BootstrapState.Ready(selectionSession(secondServer, "second-token")),
+            viewModel.bootstrapState.value,
+        )
+        assertEquals(secondServer.id, data.activeId)
     }
 
     @Test
@@ -309,8 +395,14 @@ private class SelectionData(
     val pendingValidations = mutableMapOf<String, PendingSelectionResult<AppResult<Session>>>()
     var activationFailure: IOException? = null
     var tokenReadFailure: IOException? = null
+    var serverListReadFailure: IOException? = null
+    var pendingServerListRead: PendingSelectionResult<List<SavedServer>>? = null
 
-    override suspend fun getServers(): List<SavedServer> = servers
+    override suspend fun getServers(): List<SavedServer> {
+        serverListReadFailure?.let { throw it }
+        pendingServerListRead?.let { return it.await() }
+        return servers
+    }
 
     override suspend fun getActiveServerId(): String? = activeId
 
