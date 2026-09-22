@@ -1,5 +1,7 @@
 package org.kaloscope.tv.feature.home
 
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,7 +54,10 @@ class HomeCoordinator(
         } else {
             mutableState.value = retainedContent.copy(refreshError = null)
         }
-        mutableState.value = when (val result = repository.getRecentVideos(session)) {
+        val result = repository.getRecentVideos(session)
+        // A cancelled refresh must not publish content or errors into the current session.
+        currentCoroutineContext().ensureActive()
+        mutableState.value = when (result) {
             is AppResult.Success -> {
                 if (result.value.isEmpty()) {
                     HomeUiState.Empty
