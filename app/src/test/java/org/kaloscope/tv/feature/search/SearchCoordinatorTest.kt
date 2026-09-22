@@ -1,14 +1,22 @@
 package org.kaloscope.tv.feature.search
 
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.kaloscope.tv.app.hasUnauthorized
 import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.DanmakuComment
@@ -46,10 +54,148 @@ import org.kaloscope.tv.core.player.TranscodeResolution
 import org.kaloscope.tv.core.reader.ReaderRequest
 import org.kaloscope.tv.core.reader.ReaderRequestStore
 import org.kaloscope.tv.core.model.TvSettings
+import org.kaloscope.tv.core.network.networkCall
 import org.kaloscope.tv.data.search.SearchRepository
 import org.kaloscope.tv.data.search.NetworkResourceRepository
+import retrofit2.HttpException
+import retrofit2.Response
 
 class SearchCoordinatorTest {
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `reset discards queued indexer authorization errors`() = runTest {
+        val response = PendingNetworkResponse<List<IndexerSourceProfile>>()
+        val repository = object : SearchRepository by FakeSearchRepository() {
+            override suspend fun getAvailableProfiles(session: Session) = response.await()
+        }
+        val coordinator = coordinator(repository)
+        val job = launch { coordinator.load(session()) }
+        runCurrent()
+
+        response.failUnauthorized()
+        job.cancel()
+        coordinator.reset()
+        runCurrent()
+
+        assertEquals(SearchUiState.Loading, coordinator.state.value)
+        assertFalse(coordinator.state.value.hasUnauthorized())
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `cancelled first page cannot replace the new indexer state`() = runTest {
+        val response = PendingNetworkResponse<NetworkSearchPage>()
+        val repository = object : SearchRepository by FakeSearchRepository(
+            availableProfiles = AppResult.Success(listOf(profile(11), profile(12))),
+        ) {
+            override suspend fun search(
+                session: Session,
+                profile: IndexerSourceProfile,
+                keyword: String,
+                filters: Map<String, SearchFilterValue>,
+                pageNumber: Int,
+            ) = response.await()
+        }
+        val coordinator = coordinator(repository)
+        coordinator.load(session())
+        coordinator.updateQuery("query")
+        val job = launch { coordinator.search(session()) }
+        runCurrent()
+
+        response.failUnauthorized()
+        job.cancel()
+        coordinator.selectIndexer(session(), 12)
+        val selected = coordinator.state.value as SearchUiState.Content
+        runCurrent()
+
+        assertEquals(12L, selected.selectedIndexerId)
+        assertEquals(SearchResultsState.AwaitingQuery, selected.results)
+        assertEquals(selected, coordinator.state.value)
+        assertFalse(coordinator.state.value.hasUnauthorized())
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `cancelled pagination cannot restore the previous indexer results`() = runTest {
+        val response = PendingNetworkResponse<NetworkSearchPage>()
+        val repository = FakeSearchRepository(
+            availableProfiles = AppResult.Success(listOf(profile(11), profile(12))),
+            pages = mutableListOf(AppResult.Success(page("old", hasNext = true))),
+            pendingPage = response,
+        )
+        val coordinator = coordinator(repository)
+        coordinator.load(session())
+        coordinator.updateQuery("query")
+        coordinator.search(session())
+        val job = launch { coordinator.loadNext(session()) }
+        runCurrent()
+
+        response.failUnauthorized()
+        job.cancel()
+        coordinator.selectIndexer(session(), 12)
+        val selected = coordinator.state.value as SearchUiState.Content
+        runCurrent()
+
+        assertEquals(12L, selected.selectedIndexerId)
+        assertEquals(SearchResultsState.AwaitingQuery, selected.results)
+        assertEquals(selected, coordinator.state.value)
+        assertFalse(coordinator.state.value.hasUnauthorized())
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `cancelled pagination drops queued errors and clears its loading state`() = runTest {
+        val response = PendingNetworkResponse<NetworkSearchPage>()
+        val repository = FakeSearchRepository(
+            pages = mutableListOf(AppResult.Success(page("v1", hasNext = true))),
+            pendingPage = response,
+        )
+        val coordinator = coordinator(repository)
+        coordinator.load(session())
+        coordinator.updateQuery("query")
+        coordinator.search(session())
+        val original = coordinator.state.value
+        val job = launch { coordinator.loadNext(session()) }
+        runCurrent()
+
+        response.failUnauthorized()
+        job.cancel()
+        runCurrent()
+
+        assertEquals(original, coordinator.state.value)
+        assertFalse(coordinator.state.value.hasUnauthorized())
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `active pagination retains queued authorization errors for root handling`() = runTest {
+        val response = PendingNetworkResponse<NetworkSearchPage>()
+        val repository = FakeSearchRepository(
+            pages = mutableListOf(AppResult.Success(page("v1", hasNext = true))),
+            pendingPage = response,
+        )
+        val coordinator = coordinator(repository)
+        coordinator.load(session())
+        coordinator.updateQuery("query")
+        coordinator.search(session())
+        val original = coordinator.state.value as SearchUiState.Content
+        val job = launch { coordinator.loadNext(session()) }
+        runCurrent()
+
+        response.failUnauthorized()
+        job.join()
+
+        assertEquals(
+            original.copy(
+                results = (original.results as SearchResultsState.Content).copy(
+                    loadMoreError = AppError.Unauthorized,
+                ),
+            ),
+            coordinator.state.value,
+        )
+        assertTrue(coordinator.state.value.hasUnauthorized())
+    }
+
     @Test
     fun `viewport is remembered for the current search dataset`() = runTest {
         val coordinator = coordinator(
@@ -610,6 +756,7 @@ private class FakeSearchRepository(
     private val availableProfiles: AppResult<List<IndexerSourceProfile>>? = null,
     private val pagingStarted: CompletableDeferred<Unit>? = null,
     private val pagingResult: CompletableDeferred<AppResult<NetworkSearchPage>>? = null,
+    private val pendingPage: PendingNetworkResponse<NetworkSearchPage>? = null,
 ) : SearchRepository {
     val searchCalls = mutableListOf<SearchCall>()
     val searchFilters = mutableListOf<Map<String, SearchFilterValue>>()
@@ -642,6 +789,9 @@ private class FakeSearchRepository(
     ): AppResult<NetworkSearchPage> {
         searchCalls += SearchCall(keyword, filters, pageNumber)
         searchFilters += filters
+        if (pageNumber > 1 && pendingPage != null) {
+            return pendingPage.await()
+        }
         if (pageNumber > 1 && pagingResult != null) {
             pagingStarted?.complete(Unit)
             return pagingResult.await()
@@ -649,6 +799,22 @@ private class FakeSearchRepository(
         return pages.removeAt(0)
     }
 
+}
+
+private class PendingNetworkResponse<T> {
+    private var continuation: CancellableContinuation<T>? = null
+
+    suspend fun await(): AppResult<T> = networkCall(Json) {
+        // Keep the real cancellable callback bridge and HTTP error mapping.
+        suspendCancellableCoroutine { continuation = it }
+    }
+
+    fun failUnauthorized() {
+        checkNotNull(continuation).resumeWithException(
+            HttpException(Response.error<Unit>(401, "".toResponseBody())),
+        )
+        continuation = null
+    }
 }
 
 private data class SearchCall(

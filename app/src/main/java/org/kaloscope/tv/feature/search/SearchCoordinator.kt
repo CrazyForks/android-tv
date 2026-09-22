@@ -2,6 +2,8 @@ package org.kaloscope.tv.feature.search
 
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -101,7 +103,10 @@ class SearchCoordinator(
 
     suspend fun load(session: Session) {
         mutableState.value = SearchUiState.Loading
-        when (val result = repository.getAvailableProfiles(session)) {
+        val result = repository.getAvailableProfiles(session)
+        // A queued network exception may become a failure result after cancellation.
+        currentCoroutineContext().ensureActive()
+        when (result) {
             is AppResult.Failure -> mutableState.value = SearchUiState.Error(result.error)
             is AppResult.Success -> {
                 if (result.value.isEmpty()) {
@@ -197,15 +202,15 @@ class SearchCoordinator(
             results = current.copy(isLoadingMore = true, loadMoreError = null),
         )
         try {
-            when (
-                val result = repository.search(
-                    session,
-                    content.selectedProfile,
-                    content.submittedKeyword,
-                    content.appliedFilters,
-                    current.pageNumber + 1,
-                )
-            ) {
+            val result = repository.search(
+                session,
+                content.selectedProfile,
+                content.submittedKeyword,
+                content.appliedFilters,
+                current.pageNumber + 1,
+            )
+            currentCoroutineContext().ensureActive()
+            when (result) {
                 is AppResult.Failure -> updateContent {
                     copy(
                         results = current.copy(
@@ -407,7 +412,9 @@ class SearchCoordinator(
         keyword: String,
         filters: Map<String, SearchFilterValue>,
     ) {
-        when (val result = repository.search(session, profile, keyword, filters, 1)) {
+        val result = repository.search(session, profile, keyword, filters, 1)
+        currentCoroutineContext().ensureActive()
+        when (result) {
             is AppResult.Failure -> updateContent {
                 copy(results = SearchResultsState.Error(result.error))
             }
