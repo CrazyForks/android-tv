@@ -135,7 +135,7 @@ class PlaybackController internal constructor(
                     fallbackAttempted = fallbackAttempted,
                 )
             ) {
-                // Auto may replace direct playback once while keeping the viewer's position.
+                // Automatic fallback must preserve both position and the viewer's play intent.
                 fallbackAttempted = true
                 sourceKind = PlaybackSourceKind.HlsTranscode
                 mutableStatus.value = mutableStatus.value.copy(
@@ -143,7 +143,11 @@ class PlaybackController internal constructor(
                     fallbackInProgress = true,
                     failure = null,
                 )
-                startSource(sourceKind, currentPositionMillis())
+                startSource(
+                    target = sourceKind,
+                    positionMillis = currentPositionMillis(),
+                    playWhenReady = player.playWhenReady,
+                )
             } else {
                 mutableStatus.value = mutableStatus.value.copy(
                     fallbackInProgress = false,
