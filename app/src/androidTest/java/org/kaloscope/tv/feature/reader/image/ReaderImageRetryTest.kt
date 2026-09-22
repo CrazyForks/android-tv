@@ -50,6 +50,33 @@ class ReaderImageRetryTest {
     }
 
     @Test
+    fun finalAutomaticRetryDoesNotShowFailureBeforeItCompletes() {
+        MockWebServer().use { server ->
+            repeat(3) { server.enqueue(MockResponse().setResponseCode(500)) }
+            server.enqueue(imageResponse())
+            server.start()
+            composeRule.mainClock.autoAdvance = false
+            try {
+                setReader(server, "/last-automatic.png")
+
+                // Observe every frame so the wait before the last retry cannot be skipped.
+                composeRule.waitUntil(10_000) {
+                    composeRule.mainClock.advanceTimeByFrame()
+                    composeRule.onNodeWithTag("reader-image-failed").assertDoesNotExist()
+                    server.requestCount >= 4 &&
+                        composeRule.onAllNodesWithTag("reader-image-current-loading")
+                            .fetchSemanticsNodes().isEmpty()
+                }
+
+                awaitImageLoaded(server, expectedRequests = 4)
+                assertRequests(server, "/last-automatic.png", count = 4)
+            } finally {
+                composeRule.mainClock.autoAdvance = true
+            }
+        }
+    }
+
+    @Test
     fun manualRetryRestartsLoadingAndTheAutomaticRetryBudget() {
         MockWebServer().use { server ->
             repeat(4) { server.enqueue(MockResponse().setResponseCode(500)) }

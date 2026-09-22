@@ -709,7 +709,12 @@ private fun ReaderRemoteImage(
                 },
             )
         }
-        if (imageRequest != null && failed && automaticRetries >= MAX_AUTOMATIC_RETRIES) {
+        if (
+            imageRequest != null &&
+            failed &&
+            !imageLoading &&
+            automaticRetries >= MAX_AUTOMATIC_RETRIES
+        ) {
             Text(
                 text = stringResource(R.string.reader_image_failed),
                 color = Color.LightGray,
