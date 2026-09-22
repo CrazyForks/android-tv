@@ -167,9 +167,18 @@ class KaloscopeViewModel @Inject constructor(
     }
 
     fun useDifferentAccount(server: SavedServer) {
-        viewModelScope.launch {
-            sessionRepository.clearToken(server.id)
-            showLogin(server)
+        bootstrapJob?.cancel()
+        bootstrapJob = viewModelScope.launch {
+            mutableBootstrapState.value = BootstrapState.Loading
+            try {
+                sessionRepository.clearToken(server.id)
+                currentCoroutineContext().ensureActive()
+                showLogin(server)
+            } catch (_: IOException) {
+                currentCoroutineContext().ensureActive()
+                // Retrying bootstrap could restore the token that failed to clear.
+                mutableBootstrapState.value = BootstrapState.SessionClearError(server)
+            }
         }
     }
 

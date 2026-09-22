@@ -69,6 +69,11 @@ fun KaloscopeApp(
                 description = stringResource(R.string.server_selection_error_server, state.server.name),
                 onRetry = { viewModel.selectServer(state.server) },
             )
+            is BootstrapState.SessionClearError -> StorageErrorScreen(
+                title = stringResource(R.string.session_clear_error_title),
+                description = stringResource(R.string.session_clear_error_server, state.server.name),
+                onRetry = { viewModel.useDifferentAccount(state.server) },
+            )
             is BootstrapState.NeedsServer -> {
                 val setupState by viewModel.serverSetupState.collectAsStateWithLifecycle()
                 val deletionState by viewModel.serverDeletionState.collectAsStateWithLifecycle()

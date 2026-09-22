@@ -90,6 +90,30 @@ class StorageErrorScreenTest {
     }
 
     @Test
+    fun sessionClearErrorIdentifiesTheServerAndFocusesRetry() {
+        var retries = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                StorageErrorScreen(
+                    title = stringResource(R.string.session_clear_error_title),
+                    description = stringResource(R.string.session_clear_error_server, "Server B"),
+                    onRetry = { retries += 1 },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("暂时无法退出登录").assertIsDisplayed()
+        composeRule.onNodeWithText("无法清除 Server B 保存的登录状态，请稍后重试。")
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("重试")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.runOnIdle {
+            assertEquals(1, retries)
+        }
+    }
+
+    @Test
     fun selectionErrorIdentifiesTheServerAndFocusesRetry() {
         var retries = 0
         composeRule.setContent {
