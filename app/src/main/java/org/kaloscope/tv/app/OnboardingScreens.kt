@@ -715,7 +715,11 @@ internal fun LoginScreen(
 }
 
 @Composable
-internal fun StorageErrorScreen(onRetry: () -> Unit) {
+internal fun StorageErrorScreen(
+    title: String,
+    description: String,
+    onRetry: () -> Unit,
+) {
     val retryFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         retryFocus.requestFocus()
@@ -723,8 +727,8 @@ internal fun StorageErrorScreen(onRetry: () -> Unit) {
 
     AppFrame {
         FormPanel(
-            title = stringResource(R.string.bootstrap_storage_error_title),
-            description = stringResource(R.string.bootstrap_storage_error_description),
+            title = title,
+            description = description,
         ) {
             PrimaryButton(
                 text = stringResource(R.string.retry),

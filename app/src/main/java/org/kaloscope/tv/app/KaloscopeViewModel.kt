@@ -3,6 +3,7 @@ package org.kaloscope.tv.app
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.io.IOException
 import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -114,16 +115,22 @@ class KaloscopeViewModel @Inject constructor(
     fun selectServer(server: SavedServer) {
         bootstrapJob?.cancel()
         bootstrapJob = viewModelScope.launch {
-            serverRepository.setActiveServer(server.id)
-            currentCoroutineContext().ensureActive()
-            // Tokens are isolated by server ID and never reused across origins.
-            val token = sessionRepository.getToken(server.id)
-            currentCoroutineContext().ensureActive()
-            if (token.isNullOrBlank()) {
-                showLogin(server)
-            } else {
-                // Validation must remain part of the selection's cancellable job.
-                resolveBootstrap()
+            try {
+                serverRepository.setActiveServer(server.id)
+                currentCoroutineContext().ensureActive()
+                // Tokens are isolated by server ID and never reused across origins.
+                val token = sessionRepository.getToken(server.id)
+                currentCoroutineContext().ensureActive()
+                if (token.isNullOrBlank()) {
+                    showLogin(server)
+                } else {
+                    // Validation must remain part of the selection's cancellable job.
+                    resolveBootstrap()
+                }
+            } catch (_: IOException) {
+                currentCoroutineContext().ensureActive()
+                // Retry the requested server even when persisting the active ID failed.
+                mutableBootstrapState.value = BootstrapState.ServerSelectionError(server)
             }
         }
     }

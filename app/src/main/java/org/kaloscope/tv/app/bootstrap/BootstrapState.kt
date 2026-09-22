@@ -9,6 +9,8 @@ sealed interface BootstrapState {
 
     data object StorageError : BootstrapState
 
+    data class ServerSelectionError(val server: SavedServer) : BootstrapState
+
     data class NeedsServer(val savedServers: List<SavedServer>) : BootstrapState
 
     data class NeedsLogin(val server: SavedServer) : BootstrapState

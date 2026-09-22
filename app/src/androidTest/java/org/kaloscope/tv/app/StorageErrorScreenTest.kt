@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -13,6 +14,7 @@ import androidx.compose.ui.test.pressKey
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
+import org.kaloscope.tv.R
 
 class StorageErrorScreenTest {
     @get:Rule
@@ -26,6 +28,8 @@ class StorageErrorScreenTest {
             KaloscopeTheme {
                 if (showError) {
                     StorageErrorScreen(
+                        title = stringResource(R.string.bootstrap_storage_error_title),
+                        description = stringResource(R.string.bootstrap_storage_error_description),
                         onRetry = {
                             retries += 1
                             showError = false
@@ -58,6 +62,30 @@ class StorageErrorScreenTest {
         retry.assertDoesNotExist()
         composeRule.runOnIdle {
             assertEquals(2, retries)
+        }
+    }
+
+    @Test
+    fun selectionErrorIdentifiesTheServerAndFocusesRetry() {
+        var retries = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                StorageErrorScreen(
+                    title = stringResource(R.string.server_selection_error_title),
+                    description = stringResource(R.string.server_selection_error_server, "Server B"),
+                    onRetry = { retries += 1 },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("暂时无法切换服务器").assertIsDisplayed()
+        composeRule.onNodeWithText("无法访问 Server B 的本地配置，请稍后重试。")
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("重试")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.runOnIdle {
+            assertEquals(1, retries)
         }
     }
 }

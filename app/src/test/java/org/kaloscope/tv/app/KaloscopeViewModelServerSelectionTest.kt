@@ -1,14 +1,17 @@
 package org.kaloscope.tv.app
 
+import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -82,6 +85,108 @@ class KaloscopeViewModelServerSelectionTest {
         assertEquals(secondServer.id, data.activeId)
         assertEquals(listOf(secondServer.id), data.validatedServerIds)
     }
+
+    @Test
+    fun `failed activation retries the selected server instead of the previously active server`() =
+        runTest(dispatcher) {
+            data.tokens[firstServer.id] = "first-token"
+            data.tokens[secondServer.id] = "second-token"
+            data.activationFailure = IOException("Write failed")
+
+            viewModel.selectServer(secondServer)
+            runCurrent()
+
+            assertEquals(
+                BootstrapState.ServerSelectionError(secondServer),
+                viewModel.bootstrapState.value,
+            )
+            assertEquals(firstServer.id, data.activeId)
+            assertTrue(data.validatedServerIds.isEmpty())
+            assertEquals("first-token", data.tokens[firstServer.id])
+            assertEquals("second-token", data.tokens[secondServer.id])
+
+            val failedSelection = viewModel.bootstrapState.value as BootstrapState.ServerSelectionError
+            data.activationFailure = null
+            viewModel.selectServer(failedSelection.server)
+            runCurrent()
+
+            assertEquals(
+                BootstrapState.Ready(selectionSession(secondServer, "second-token")),
+                viewModel.bootstrapState.value,
+            )
+            assertEquals(secondServer.id, data.activeId)
+            assertEquals(listOf(secondServer.id), data.validatedServerIds)
+        }
+
+    @Test
+    fun `failed token read does not open login until the read succeeds`() = runTest(dispatcher) {
+        data.tokenReadFailure = IOException("Read failed")
+
+        viewModel.selectServer(secondServer)
+        runCurrent()
+
+        assertEquals(
+            BootstrapState.ServerSelectionError(secondServer),
+            viewModel.bootstrapState.value,
+        )
+        assertEquals(secondServer.id, data.activeId)
+        assertTrue(data.validatedServerIds.isEmpty())
+
+        data.tokenReadFailure = null
+        viewModel.selectServer(secondServer)
+        runCurrent()
+
+        assertEquals(BootstrapState.NeedsLogin(secondServer), viewModel.bootstrapState.value)
+        assertTrue(data.validatedServerIds.isEmpty())
+    }
+
+    @Test
+    fun `failed token read preserves the saved session for retry`() = runTest(dispatcher) {
+        data.tokens[secondServer.id] = "second-token"
+        data.tokenReadFailure = IOException("Read failed")
+
+        viewModel.selectServer(secondServer)
+        runCurrent()
+
+        assertEquals(
+            BootstrapState.ServerSelectionError(secondServer),
+            viewModel.bootstrapState.value,
+        )
+        assertEquals("second-token", data.tokens[secondServer.id])
+        assertTrue(data.validatedServerIds.isEmpty())
+
+        data.tokenReadFailure = null
+        viewModel.selectServer(secondServer)
+        runCurrent()
+
+        assertEquals(
+            BootstrapState.Ready(selectionSession(secondServer, "second-token")),
+            viewModel.bootstrapState.value,
+        )
+        assertEquals(listOf(secondServer.id), data.validatedServerIds)
+    }
+
+    @Test
+    fun `storage failure from a cancelled selection cannot replace the latest session`() =
+        runTest(dispatcher) {
+            val tokenRead = PendingSelectionResult<String?>(completeAfterCancellation = true)
+            data.pendingTokenReads[firstServer.id] = tokenRead
+            data.tokens[secondServer.id] = "second-token"
+            viewModel.selectServer(firstServer)
+            runCurrent()
+
+            viewModel.selectServer(secondServer)
+            runCurrent()
+            tokenRead.result.completeExceptionally(IOException("Late read failure"))
+            runCurrent()
+
+            assertEquals(
+                BootstrapState.Ready(selectionSession(secondServer, "second-token")),
+                viewModel.bootstrapState.value,
+            )
+            assertEquals(secondServer.id, data.activeId)
+            assertEquals(listOf(secondServer.id), data.validatedServerIds)
+        }
 
     @Test
     fun `new selection cancels pending server activation`() = runTest(dispatcher) {
@@ -202,17 +307,21 @@ private class SelectionData(
     val pendingActivations = mutableMapOf<String, PendingSelectionResult<Unit>>()
     val pendingTokenReads = mutableMapOf<String, PendingSelectionResult<String?>>()
     val pendingValidations = mutableMapOf<String, PendingSelectionResult<AppResult<Session>>>()
+    var activationFailure: IOException? = null
+    var tokenReadFailure: IOException? = null
 
     override suspend fun getServers(): List<SavedServer> = servers
 
     override suspend fun getActiveServerId(): String? = activeId
 
     override suspend fun setActiveServer(serverId: String) {
+        activationFailure?.let { throw it }
         pendingActivations[serverId]?.await()
         activeId = serverId
     }
 
     override suspend fun getToken(serverId: String): String? {
+        tokenReadFailure?.let { throw it }
         pendingTokenReads[serverId]?.let { return it.await() }
         return tokens[serverId]
     }
@@ -247,12 +356,18 @@ private class SelectionData(
     ): AppResult<Session> = error("Not used")
 }
 
-private class PendingSelectionResult<T> {
+private class PendingSelectionResult<T>(
+    private val completeAfterCancellation: Boolean = false,
+) {
     val result = CompletableDeferred<T>()
     var cancelled = false
 
     suspend fun await(): T = try {
-        result.await()
+        if (completeAfterCancellation) {
+            withContext(NonCancellable) { result.await() }
+        } else {
+            result.await()
+        }
     } catch (error: CancellationException) {
         cancelled = true
         throw error

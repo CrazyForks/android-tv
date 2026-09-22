@@ -4,7 +4,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.kaloscope.tv.R
 import org.kaloscope.tv.app.bootstrap.BootstrapState
 import org.kaloscope.tv.app.navigation.toRootRoute
 import org.kaloscope.tv.core.model.AccentColor
@@ -52,7 +54,16 @@ fun KaloscopeApp(
         // Exactly one root subtree is composed to prevent hidden screens from retaining focus.
         when (val state = bootstrapState) {
             BootstrapState.Loading -> LoadingScreen()
-            BootstrapState.StorageError -> StorageErrorScreen(onRetry = viewModel::retryBootstrap)
+            BootstrapState.StorageError -> StorageErrorScreen(
+                title = stringResource(R.string.bootstrap_storage_error_title),
+                description = stringResource(R.string.bootstrap_storage_error_description),
+                onRetry = viewModel::retryBootstrap,
+            )
+            is BootstrapState.ServerSelectionError -> StorageErrorScreen(
+                title = stringResource(R.string.server_selection_error_title),
+                description = stringResource(R.string.server_selection_error_server, state.server.name),
+                onRetry = { viewModel.selectServer(state.server) },
+            )
             is BootstrapState.NeedsServer -> {
                 val setupState by viewModel.serverSetupState.collectAsStateWithLifecycle()
                 val deletionState by viewModel.serverDeletionState.collectAsStateWithLifecycle()
