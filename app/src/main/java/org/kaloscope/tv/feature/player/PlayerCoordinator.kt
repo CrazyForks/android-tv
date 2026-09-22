@@ -2,6 +2,8 @@ package org.kaloscope.tv.feature.player
 
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -177,12 +179,14 @@ class PlayerCoordinator(
         }
     }
 
-    private fun <T> applyExtraResult(
+    private suspend fun <T> applyExtraResult(
         request: PlaybackRequest.LocalMedia,
         extra: PlayerExtra,
         result: AppResult<T>,
         onSuccess: PlayerUiState.Content.(T) -> PlayerUiState.Content,
     ) {
+        // A queued network exception may become a failure result after the retry is cancelled.
+        currentCoroutineContext().ensureActive()
         // Merge into the state after the request completes, preserving other in-flight updates.
         val latest = mutableState.value as? PlayerUiState.Content ?: return
         // Episode switches reuse request IDs, so compare the full playback request.

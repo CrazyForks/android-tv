@@ -1,10 +1,14 @@
 package org.kaloscope.tv.feature.player
 
 import androidx.lifecycle.viewModelScope
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -12,6 +16,8 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.serialization.json.Json
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -41,6 +47,7 @@ import org.kaloscope.tv.core.model.SubtitleTrack
 import org.kaloscope.tv.core.model.SubtitleSettings
 import org.kaloscope.tv.core.model.TvSettings
 import org.kaloscope.tv.core.model.WatchHistoryItem
+import org.kaloscope.tv.core.network.networkCall
 import org.kaloscope.tv.core.player.PlaybackMode
 import org.kaloscope.tv.core.player.PlaybackPreparationStage
 import org.kaloscope.tv.core.player.ProgressReason
@@ -52,6 +59,8 @@ import org.kaloscope.tv.core.player.TranscodeResolution
 import org.kaloscope.tv.data.history.HistoryRepository
 import org.kaloscope.tv.data.search.NetworkResourceRepository
 import org.kaloscope.tv.test.StubMediaRepository
+import retrofit2.HttpException
+import retrofit2.Response
 
 class PlayerViewModelSettingsTest {
     @Test
@@ -820,6 +829,169 @@ class PlayerViewModelSettingsTest {
         } finally {
             Dispatchers.resetMain()
         }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `closing player discards queued extra authorization errors`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            for (extra in listOf(PlayerExtra.Subtitles, PlayerExtra.Danmakus)) {
+                val store = PlaybackRequestStore()
+                val repository = QueuedExtrasRepository()
+                val viewModel = PlayerViewModel(
+                    requestStore = store,
+                    mediaRepository = repository,
+                    historyRepository = unusedHistoryRepository(),
+                    networkResourceRepository = unusedNetworkResourceRepository(),
+                )
+                try {
+                    val requestId = checkNotNull(viewModel.createFromHistory(session(), history()))
+                    viewModel.load(session(), requestId)
+                    runCurrent()
+                    val original = viewModel.uiState.value as PlayerUiState.Content
+                    repository.suspendRetries = true
+                    viewModel.retryExtra(session(), extra)
+                    runCurrent()
+
+                    repository.failRetry(extra)
+                    viewModel.close(requestId)
+                    runCurrent()
+
+                    assertEquals(original, viewModel.uiState.value)
+                    assertFalse(viewModel.uiState.value.hasUnauthorized())
+                    assertNull(store.get(requestId))
+                } finally {
+                    viewModel.viewModelScope.cancel()
+                    runCurrent()
+                }
+            }
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `new extra retry discards queued errors from the cancelled retry`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            for (extra in listOf(PlayerExtra.Subtitles, PlayerExtra.Danmakus)) {
+                val repository = QueuedExtrasRepository()
+                val viewModel = PlayerViewModel(
+                    requestStore = PlaybackRequestStore(),
+                    mediaRepository = repository,
+                    historyRepository = unusedHistoryRepository(),
+                    networkResourceRepository = unusedNetworkResourceRepository(),
+                )
+                try {
+                    val requestId = checkNotNull(viewModel.createFromHistory(session(), history()))
+                    viewModel.load(session(), requestId)
+                    runCurrent()
+                    val original = viewModel.uiState.value as PlayerUiState.Content
+                    repository.suspendRetries = true
+                    viewModel.retryExtra(session(), extra)
+                    runCurrent()
+
+                    repository.failRetry(extra)
+                    viewModel.retryExtra(session(), extra)
+                    runCurrent()
+
+                    assertEquals(original, viewModel.uiState.value)
+                    assertFalse(viewModel.uiState.value.hasUnauthorized())
+                    repository.completeRetry(extra)
+                    runCurrent()
+                    assertEquals(
+                        original.copy(extraFailures = original.extraFailures - extra),
+                        viewModel.uiState.value,
+                    )
+                } finally {
+                    viewModel.viewModelScope.cancel()
+                    runCurrent()
+                }
+            }
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `active extra retry retains authorization errors for root handling`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            for (extra in listOf(PlayerExtra.Subtitles, PlayerExtra.Danmakus)) {
+                val repository = QueuedExtrasRepository()
+                val viewModel = PlayerViewModel(
+                    requestStore = PlaybackRequestStore(),
+                    mediaRepository = repository,
+                    historyRepository = unusedHistoryRepository(),
+                    networkResourceRepository = unusedNetworkResourceRepository(),
+                )
+                try {
+                    val requestId = checkNotNull(viewModel.createFromHistory(session(), history()))
+                    viewModel.load(session(), requestId)
+                    runCurrent()
+                    val original = viewModel.uiState.value as PlayerUiState.Content
+                    repository.suspendRetries = true
+                    viewModel.retryExtra(session(), extra)
+                    runCurrent()
+
+                    repository.failRetry(extra)
+                    runCurrent()
+
+                    assertEquals(
+                        original.copy(
+                            extraFailures = original.extraFailures + (extra to AppError.Unauthorized),
+                        ),
+                        viewModel.uiState.value,
+                    )
+                    assertTrue(viewModel.uiState.value.hasUnauthorized())
+                } finally {
+                    viewModel.viewModelScope.cancel()
+                    runCurrent()
+                }
+            }
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+}
+
+private class QueuedExtrasRepository : StubMediaRepository() {
+    var suspendRetries = false
+    private val pendingRetries = mutableMapOf<PlayerExtra, CancellableContinuation<Unit>>()
+
+    override suspend fun getMediaProbe(session: Session, path: String): AppResult<MediaProbe> =
+        AppResult.Success(MediaProbe(durationMillis = 90_000, chapters = emptyList()))
+
+    override suspend fun getSubtitleTracks(
+        session: Session,
+        path: String,
+    ): AppResult<List<SubtitleTrack>> = loadExtra(PlayerExtra.Subtitles)
+
+    override suspend fun getDanmakus(
+        session: Session,
+        path: String,
+    ): AppResult<List<DanmakuComment>> = loadExtra(PlayerExtra.Danmakus)
+
+    private suspend fun <T> loadExtra(extra: PlayerExtra): AppResult<List<T>> {
+        if (!suspendRetries) return AppResult.Failure(AppError.Offline)
+        return networkCall(Json) {
+            // Match Retrofit's cancellable callback bridge and production error mapping.
+            suspendCancellableCoroutine<Unit> { pendingRetries[extra] = it }
+            emptyList()
+        }
+    }
+
+    fun failRetry(extra: PlayerExtra) {
+        checkNotNull(pendingRetries.remove(extra)).resumeWithException(
+            HttpException(Response.error<Unit>(401, "".toResponseBody())),
+        )
+    }
+
+    fun completeRetry(extra: PlayerExtra) {
+        checkNotNull(pendingRetries.remove(extra)).resume(Unit)
     }
 }
 
