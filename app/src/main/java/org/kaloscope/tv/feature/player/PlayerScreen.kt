@@ -436,6 +436,7 @@ private fun PlayerContent(
                 playbackState = status.playbackState,
                 autoplayNext = state.request.autoplayNext,
                 hasNext = hasNext,
+                switchingItem = state.switchingItem,
             )
         ) {
             controller.recordItemSwitchProgress()

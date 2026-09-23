@@ -13,6 +13,7 @@ class PlaybackSettingsPolicyTest {
                 playbackState = Player.STATE_ENDED,
                 autoplayNext = true,
                 hasNext = true,
+                switchingItem = false,
             ),
         )
         assertFalse(
@@ -20,6 +21,7 @@ class PlaybackSettingsPolicyTest {
                 playbackState = Player.STATE_READY,
                 autoplayNext = true,
                 hasNext = true,
+                switchingItem = false,
             ),
         )
         assertFalse(
@@ -27,6 +29,27 @@ class PlaybackSettingsPolicyTest {
                 playbackState = Player.STATE_ENDED,
                 autoplayNext = false,
                 hasNext = true,
+                switchingItem = false,
+            ),
+        )
+        assertFalse(
+            PlaybackSettingsPolicy.shouldAutoAdvance(
+                playbackState = Player.STATE_ENDED,
+                autoplayNext = true,
+                hasNext = false,
+                switchingItem = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `autoplay does not interrupt an item switch`() {
+        assertFalse(
+            PlaybackSettingsPolicy.shouldAutoAdvance(
+                playbackState = Player.STATE_ENDED,
+                autoplayNext = true,
+                hasNext = true,
+                switchingItem = true,
             ),
         )
     }

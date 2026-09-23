@@ -1,6 +1,7 @@
 package org.kaloscope.tv.feature.player
 
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.Player
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellableContinuation
@@ -53,7 +54,9 @@ import org.kaloscope.tv.core.player.PlaybackPreparationStage
 import org.kaloscope.tv.core.player.ProgressReason
 import org.kaloscope.tv.core.player.LocalEpisodeRef
 import org.kaloscope.tv.core.player.PlaybackRequest
+import org.kaloscope.tv.core.player.PlaybackRequestNavigator
 import org.kaloscope.tv.core.player.PlaybackRequestStore
+import org.kaloscope.tv.core.player.PlaybackSettingsPolicy
 import org.kaloscope.tv.core.player.TranscodeQuality
 import org.kaloscope.tv.core.player.TranscodeResolution
 import org.kaloscope.tv.data.history.HistoryRepository
@@ -766,6 +769,60 @@ class PlayerViewModelSettingsTest {
 
     @Test
     @OptIn(ExperimentalCoroutinesApi::class)
+    fun `playback ending does not replace a pending manual episode selection`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val store = PlaybackRequestStore()
+        val repository = RecordingNetworkResourceRepository().apply { suspendResolution = true }
+        val viewModel = PlayerViewModel(
+            requestStore = store,
+            mediaRepository = unusedMediaRepository(),
+            historyRepository = unusedHistoryRepository(),
+            networkResourceRepository = repository,
+        )
+        try {
+            val request = networkRequest()
+            store.put(request)
+            viewModel.load(session(), request.requestId)
+            runCurrent()
+            viewModel.selectEpisode(session(), episodeIndex = 2)
+            runCurrent()
+            val switching = viewModel.uiState.value as PlayerUiState.Content
+            assertTrue(switching.switchingItem)
+            assertEquals(2, repository.requestedChapterIndex)
+
+            if (
+                PlaybackSettingsPolicy.shouldAutoAdvance(
+                    playbackState = Player.STATE_ENDED,
+                    autoplayNext = switching.request.autoplayNext,
+                    hasNext = PlaybackRequestNavigator.hasNext(switching.request),
+                    switchingItem = switching.switchingItem,
+                )
+            ) {
+                viewModel.switchAdjacent(session(), offset = 1)
+            }
+            runCurrent()
+
+            assertEquals(2, repository.requestedChapterIndex)
+            val selectedSource = request.source.copy(
+                title = "Episode 3",
+                url = "https://cdn.example.test/episode-3.m3u8",
+                selectedChapterIndex = 2,
+            )
+            repository.completeChapterResolution(selectedSource)
+            runCurrent()
+            val selected = viewModel.uiState.value as PlayerUiState.Content
+            assertEquals(selectedSource, (selected.request as PlaybackRequest.NetworkVideo).source)
+            assertFalse(selected.switchingItem)
+            assertEquals(selected.request, store.get(request.requestId))
+        } finally {
+            viewModel.viewModelScope.cancel()
+            runCurrent()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `closing player discards queued network chapter authorization errors`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val store = PlaybackRequestStore()
@@ -1165,6 +1222,11 @@ private class RecordingNetworkResourceRepository : NetworkResourceRepository {
         checkNotNull(pendingResolution).resumeWithException(
             HttpException(Response.error<Unit>(401, "".toResponseBody())),
         )
+        pendingResolution = null
+    }
+
+    fun completeChapterResolution(source: NetworkPlaybackSource) {
+        checkNotNull(pendingResolution).resume(source)
         pendingResolution = null
     }
 

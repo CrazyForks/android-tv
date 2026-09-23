@@ -7,6 +7,8 @@ object PlaybackSettingsPolicy {
         playbackState: Int,
         autoplayNext: Boolean,
         hasNext: Boolean,
+        switchingItem: Boolean,
     ): Boolean =
-        playbackState == Player.STATE_ENDED && autoplayNext && hasNext
+        // The old item may end while an explicit episode selection is still loading.
+        playbackState == Player.STATE_ENDED && autoplayNext && hasNext && !switchingItem
 }
