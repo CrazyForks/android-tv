@@ -2,6 +2,8 @@ package org.kaloscope.tv.feature.reader
 
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -111,7 +113,10 @@ class ReaderCoordinator(
         val requestGeneration = generation.incrementAndGet()
         mutableState.value = current.startChapterLoading()
         val result = try {
-            contentLoader.resolveChapter(session, currentContent, chapterIndex)
+            contentLoader.resolveChapter(session, currentContent, chapterIndex).also {
+                // A queued HTTP error can return as a result after cancellation.
+                currentCoroutineContext().ensureActive()
+            }
         } catch (error: CancellationException) {
             if (generation.get() == requestGeneration) {
                 updateActive { finishChapterLoading() }
@@ -135,7 +140,9 @@ class ReaderCoordinator(
         val requestGeneration = generation.get()
         mutableState.value = current.copy(isLoadingMore = true, pageError = null)
         val result = try {
-            contentLoader.loadImagePage(session, current.content)
+            contentLoader.loadImagePage(session, current.content).also {
+                currentCoroutineContext().ensureActive()
+            }
         } catch (error: CancellationException) {
             if (generation.get() == requestGeneration) {
                 updateImage { copy(isLoadingMore = false) }

@@ -1,15 +1,21 @@
 package org.kaloscope.tv.feature.reader
 
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.kaloscope.tv.app.hasUnauthorized
 import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.ImageReadMode
@@ -24,9 +30,12 @@ import org.kaloscope.tv.core.model.SavedServer
 import org.kaloscope.tv.core.model.Session
 import org.kaloscope.tv.core.model.SessionUser
 import org.kaloscope.tv.core.model.TextReaderSettings
+import org.kaloscope.tv.core.network.networkCall
 import org.kaloscope.tv.core.reader.ReaderRequest
 import org.kaloscope.tv.core.reader.ReaderRequestStore
 import org.kaloscope.tv.data.reader.ReaderContentLoader
+import retrofit2.HttpException
+import retrofit2.Response
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReaderCoordinatorTest {
@@ -62,6 +71,65 @@ class ReaderCoordinatorTest {
         assertEquals(ImageReadMode.Paged, after.settings.readMode)
         assertEquals(AppError.Offline, after.chapterError)
         assertFalse(after.isChapterLoading)
+    }
+
+    @Test
+    fun `cancelled chapter drops queued errors and clears loading without replacing content`() = runTest {
+        val response = PendingNetworkResponse<ReaderContent>()
+        val loader = object : ReaderContentLoader by FakeReaderContentLoader() {
+            override suspend fun resolveChapter(
+                session: Session,
+                content: ReaderContent,
+                chapterIndex: Int,
+            ) = response.await()
+        }
+        val coordinator = ReaderCoordinator(
+            ReaderRequestStore().apply { put(imageRequest()) },
+            loader,
+        )
+        coordinator.load("reader-1", session())
+        val original = coordinator.state.value
+        var returnedNormally = false
+        val job = launch {
+            coordinator.selectChapter(session(), 1)
+            returnedNormally = true
+        }
+        runCurrent()
+        assertTrue((coordinator.state.value as ReaderUiState.Image).isChapterLoading)
+
+        response.failUnauthorized()
+        job.cancel()
+        runCurrent()
+
+        assertEquals(original, coordinator.state.value)
+        assertFalse(coordinator.state.value.hasUnauthorized())
+        assertFalse(returnedNormally)
+    }
+
+    @Test
+    fun `active chapter retains queued authorization errors for root handling`() = runTest {
+        val response = PendingNetworkResponse<ReaderContent>()
+        val loader = object : ReaderContentLoader by FakeReaderContentLoader() {
+            override suspend fun resolveChapter(
+                session: Session,
+                content: ReaderContent,
+                chapterIndex: Int,
+            ) = response.await()
+        }
+        val coordinator = ReaderCoordinator(
+            ReaderRequestStore().apply { put(imageRequest()) },
+            loader,
+        )
+        coordinator.load("reader-1", session())
+        val original = coordinator.state.value as ReaderUiState.Image
+        val job = launch { coordinator.selectChapter(session(), 1) }
+        runCurrent()
+
+        response.failUnauthorized()
+        job.join()
+
+        assertEquals(original.copy(chapterError = AppError.Unauthorized), coordinator.state.value)
+        assertTrue(coordinator.state.value.hasUnauthorized())
     }
 
     @Test
@@ -164,6 +232,63 @@ class ReaderCoordinatorTest {
         assertEquals(listOf("one.jpg", "two.jpg", "three.jpg"), state.content.images)
         assertEquals(AppError.Offline, state.pageError)
         assertFalse(state.isLoadingMore)
+    }
+
+    @Test
+    fun `cancelled pagination drops queued errors and clears loading without replacing content`() = runTest {
+        val response = PendingNetworkResponse<ReaderImagePage>()
+        val loader = object : ReaderContentLoader by FakeReaderContentLoader() {
+            override suspend fun loadImagePage(
+                session: Session,
+                content: ReaderImageContent,
+            ) = response.await()
+        }
+        val coordinator = ReaderCoordinator(
+            ReaderRequestStore().apply { put(imageRequest()) },
+            loader,
+        )
+        coordinator.load("reader-1", session())
+        val original = coordinator.state.value
+        var returnedNormally = false
+        val job = launch {
+            coordinator.loadMoreImages(session())
+            returnedNormally = true
+        }
+        runCurrent()
+        assertTrue((coordinator.state.value as ReaderUiState.Image).isLoadingMore)
+
+        response.failUnauthorized()
+        job.cancel()
+        runCurrent()
+
+        assertEquals(original, coordinator.state.value)
+        assertFalse(coordinator.state.value.hasUnauthorized())
+        assertFalse(returnedNormally)
+    }
+
+    @Test
+    fun `active pagination retains queued authorization errors for root handling`() = runTest {
+        val response = PendingNetworkResponse<ReaderImagePage>()
+        val loader = object : ReaderContentLoader by FakeReaderContentLoader() {
+            override suspend fun loadImagePage(
+                session: Session,
+                content: ReaderImageContent,
+            ) = response.await()
+        }
+        val coordinator = ReaderCoordinator(
+            ReaderRequestStore().apply { put(imageRequest()) },
+            loader,
+        )
+        coordinator.load("reader-1", session())
+        val original = coordinator.state.value as ReaderUiState.Image
+        val job = launch { coordinator.loadMoreImages(session()) }
+        runCurrent()
+
+        response.failUnauthorized()
+        job.join()
+
+        assertEquals(original.copy(pageError = AppError.Unauthorized), coordinator.state.value)
+        assertTrue(coordinator.state.value.hasUnauthorized())
     }
 
     @Test
@@ -333,6 +458,22 @@ private class FakeReaderContentLoader(
     ): AppResult<ReaderImagePage> {
         pageRequests += content
         return pendingPageResult?.await() ?: pageResults.removeFirst()
+    }
+}
+
+private class PendingNetworkResponse<T> {
+    private var continuation: CancellableContinuation<T>? = null
+
+    suspend fun await(): AppResult<T> = networkCall(Json) {
+        // Preserve the production callback cancellation and HTTP error mapping.
+        suspendCancellableCoroutine { continuation = it }
+    }
+
+    fun failUnauthorized() {
+        checkNotNull(continuation).resumeWithException(
+            HttpException(Response.error<Unit>(401, "".toResponseBody())),
+        )
+        continuation = null
     }
 }
 
