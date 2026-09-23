@@ -1082,6 +1082,16 @@ class ReaderScreenTest {
     }
 
     @Test
+    fun retryingImagePageRestoresScrollFocusThroughFailureAndSuccess() {
+        assertPageRetryFocus(ImageReadMode.Scroll, showControls = false)
+    }
+
+    @Test
+    fun retryingImagePageRestoresPagedControlsThroughFailureAndSuccess() {
+        assertPageRetryFocus(ImageReadMode.Paged, showControls = true)
+    }
+
+    @Test
     fun chapterLoadingAllowsBackToExitReader() {
         var exits = 0
         setReader(
@@ -1955,6 +1965,96 @@ class ReaderScreenTest {
             assertEquals(viewport.top, firstImage.top, 1f)
         }
         composeRule.runOnIdle { assertEquals(0, exits) }
+    }
+
+    private fun assertPageRetryFocus(readMode: ImageReadMode, showControls: Boolean) {
+        val images = (1..2).map { "https://cdn.example.test/page-$it.jpg" }
+        var state by mutableStateOf(
+            imageState(readMode = readMode, images = images.take(1)).let {
+                it.copy(
+                    content = it.content.copy(imageCount = images.size),
+                    imagesExhausted = false,
+                    pageError = AppError.Offline,
+                )
+            },
+        )
+        var loadMoreRequests = 0
+        var exits = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                ReaderScreen(
+                    session = session(),
+                    state = state,
+                    onBack = { exits += 1 },
+                    onSelectChapter = {},
+                    onLoadMoreImages = {
+                        loadMoreRequests += 1
+                        state = state.copy(isLoadingMore = true, pageError = null)
+                    },
+                    onImageSettings = {},
+                    onTextSettings = {},
+                    onChapterOrder = {},
+                    onDismissChapterError = {},
+                    onDismissPageError = {},
+                )
+            }
+        }
+        val content = composeRule.onNodeWithTag(
+            if (readMode == ImageReadMode.Scroll) "image-reader-scroll" else "image-reader-paged",
+        )
+        content.assertIsFocused()
+        if (showControls) {
+            content.performKeyInput { pressKey(Key.DirectionCenter) }
+            control("章节").performKeyInput { pressKey(Key.DirectionRight) }
+            control("阅读设置").assertIsFocused()
+        }
+        val focusTarget = if (showControls) control("阅读设置") else content
+
+        repeat(2) { attempt ->
+            control("重试")
+                .performSemanticsAction(SemanticsActions.RequestFocus)
+                .performKeyInput { pressKey(Key.Enter) }
+
+            composeRule.onNodeWithTag("reader-recoverable-error").assertDoesNotExist()
+            focusTarget.assertIsFocused()
+            if (!showControls) {
+                composeRule.onNodeWithTag("reader-bottom-controls").assertDoesNotExist()
+            }
+            composeRule.runOnIdle {
+                assertEquals(attempt + 1, loadMoreRequests)
+                assertTrue(state.isLoadingMore)
+                state = if (attempt == 0) {
+                    state.copy(isLoadingMore = false, pageError = AppError.Offline)
+                } else {
+                    state.copy(
+                        content = state.content.copy(images = images),
+                        isLoadingMore = false,
+                        imagesExhausted = true,
+                    )
+                }
+            }
+            focusTarget.assertIsFocused()
+        }
+
+        if (showControls) {
+            focusTarget.performKeyInput { pressKey(Key.DirectionLeft) }
+            control("章节").assertIsFocused()
+            pressBack()
+        }
+        content.assertIsFocused().performKeyInput {
+            pressKey(if (readMode == ImageReadMode.Scroll) Key.DirectionDown else Key.DirectionRight)
+        }
+        composeRule.waitForIdle()
+        content.performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.onNodeWithText("第 2 / 2 页").assertExists()
+        pressBack()
+        content.assertIsFocused()
+        composeRule.runOnIdle {
+            assertEquals(2, loadMoreRequests)
+            assertEquals(0, exits)
+        }
+        pressBack()
+        composeRule.runOnIdle { assertEquals(1, exits) }
     }
 
     private fun assertPagedRetryPosition(navigateBack: Boolean, expectedPosition: Int) {

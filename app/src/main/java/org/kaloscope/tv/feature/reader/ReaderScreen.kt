@@ -205,10 +205,10 @@ private fun ActiveReader(
             ?.takeIf(::controlTargetIsEnabled)
             ?: defaultControlTarget(content.chapters)
 
-    fun dismissRecoverableError(onDismiss: () -> Unit) {
-        onDismiss()
+    fun runRecoverableErrorAction(action: () -> Unit) {
+        action()
         if (drawer != null || state.isChapterLoading) return
-        // The dismissed banner removes its focused button, so restore a stable target.
+        // Dismissal and page retries remove the focused banner button.
         if (controlsVisible) {
             requestControl(entryControlTarget())
         } else {
@@ -469,7 +469,7 @@ private fun ActiveReader(
             ReaderRecoverableError(
                 message = stringResource(R.string.reader_switch_chapter_failed),
                 detail = appErrorText(error),
-                onDismiss = { dismissRecoverableError(onDismissChapterError) },
+                onDismiss = { runRecoverableErrorAction(onDismissChapterError) },
                 onRetry = lastRequestedChapterIndex?.let { index ->
                     { selectChapter(index) }
                 },
@@ -481,8 +481,8 @@ private fun ActiveReader(
                 ReaderRecoverableError(
                     message = stringResource(R.string.reader_load_more_failed),
                     detail = appErrorText(error),
-                    onDismiss = { dismissRecoverableError(onDismissPageError) },
-                    onRetry = onLoadMoreImages,
+                    onDismiss = { runRecoverableErrorAction(onDismissPageError) },
+                    onRetry = { runRecoverableErrorAction(onLoadMoreImages) },
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
             }
