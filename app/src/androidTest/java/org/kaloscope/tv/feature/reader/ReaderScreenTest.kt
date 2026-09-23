@@ -1432,6 +1432,16 @@ class ReaderScreenTest {
     }
 
     @Test
+    fun pagedRetryKeepsThePageChosenAfterLoadingFailed() {
+        assertPagedRetryPosition(navigateBack = true, expectedPosition = 1)
+    }
+
+    @Test
+    fun pagedRetryAdvancesWhenTheReaderStaysOnTheLastPage() {
+        assertPagedRetryPosition(navigateBack = false, expectedPosition = 3)
+    }
+
+    @Test
     fun textSettingChangePublishesTheGlobalPreference() {
         var state by mutableStateOf(textState(text = "正文"))
         var persisted: TextReaderSettings? = null
@@ -1722,6 +1732,76 @@ class ReaderScreenTest {
             assertEquals(viewport.top, firstImage.top, 1f)
         }
         composeRule.runOnIdle { assertEquals(0, exits) }
+    }
+
+    private fun assertPagedRetryPosition(navigateBack: Boolean, expectedPosition: Int) {
+        val images = (1..4).map { "https://cdn.example.test/page-$it.jpg" }
+        var state by mutableStateOf(
+            imageState(readMode = ImageReadMode.Paged, images = images.take(2)).let {
+                it.copy(
+                    content = it.content.copy(imageCount = images.size),
+                    imagesExhausted = false,
+                )
+            },
+        )
+        var loadMoreRequests = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                ReaderScreen(
+                    session = session(),
+                    state = state,
+                    onBack = {},
+                    onSelectChapter = {},
+                    onLoadMoreImages = {
+                        loadMoreRequests += 1
+                        state = state.copy(isLoadingMore = true, pageError = null)
+                    },
+                    onImageSettings = {},
+                    onTextSettings = {},
+                    onChapterOrder = {},
+                    onDismissChapterError = {},
+                    onDismissPageError = {},
+                )
+            }
+        }
+        val content = composeRule.onNodeWithTag("image-reader-paged")
+        content.assertIsFocused().performKeyInput { pressKey(Key.DirectionRight) }
+        composeRule.mainClock.advanceTimeBy(250)
+        content.performKeyInput { pressKey(Key.DirectionRight) }
+        composeRule.onNodeWithTag("reader-image-loading-more-paged").assertExists()
+        composeRule.runOnIdle {
+            assertEquals(1, loadMoreRequests)
+            state = state.copy(isLoadingMore = false, pageError = AppError.Offline)
+        }
+        composeRule.onNodeWithTag("reader-recoverable-error").assertExists()
+        if (navigateBack) {
+            content.assertIsFocused().performKeyInput { pressKey(Key.DirectionLeft) }
+            composeRule.mainClock.advanceTimeBy(250)
+        }
+        content.performKeyInput { pressKey(Key.DirectionCenter) }
+        val positionBeforeRetry = if (navigateBack) 1 else 2
+        composeRule.onNodeWithText("第 $positionBeforeRetry / 4 页").assertExists()
+        control("重试")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+        composeRule.onNodeWithTag("reader-image-loading-more-paged").assertExists()
+        composeRule.runOnIdle {
+            assertEquals(2, loadMoreRequests)
+            state = state.copy(
+                content = state.content.copy(images = images),
+                isLoadingMore = false,
+                imagesExhausted = true,
+            )
+        }
+        composeRule.onNodeWithTag("reader-recoverable-error").assertDoesNotExist()
+        composeRule.onNodeWithText("第 $expectedPosition / 4 页").assertExists()
+        composeRule.mainClock.advanceTimeBy(250)
+        pressBack()
+        content.assertIsFocused().performKeyInput { pressKey(Key.DirectionRight) }
+        composeRule.mainClock.advanceTimeBy(250)
+        content.performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.onNodeWithText("第 ${expectedPosition + 1} / 4 页").assertExists()
+        composeRule.runOnIdle { assertEquals(2, loadMoreRequests) }
     }
 
     private fun assertPagedAppendPosition(

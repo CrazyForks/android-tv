@@ -489,6 +489,8 @@ private fun PagedImages(
                     ?: return@onPreviewKeyEvent false
                 when (ReaderRemoteKeyPolicy.pagedStep(direction, settings.pageDirection)) {
                     ReaderNavigationStep.Backward -> if (index > 0) {
+                        // Returning to earlier pages supersedes the advance pending a retry.
+                        advanceAfterLoad = false
                         index -= 1
                         pageTransitioning = true
                         scope.launch {
