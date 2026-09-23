@@ -696,6 +696,65 @@ class ReaderScreenTest {
     }
 
     @Test
+    fun scrollingPaginationUpdatesTheDisplayedPageNumber() {
+        val images = (1..3).map { "https://cdn.example.test/page-$it.jpg" }
+        var state by mutableStateOf(
+            imageState(images = images.take(1)).let {
+                it.copy(
+                    content = it.content.copy(imageCount = images.size),
+                    imagesExhausted = false,
+                )
+            },
+        )
+        var loadMoreRequests = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                ReaderScreen(
+                    session = session(),
+                    state = state,
+                    onBack = {},
+                    onSelectChapter = {},
+                    onLoadMoreImages = {
+                        loadMoreRequests += 1
+                        state = state.copy(isLoadingMore = true)
+                    },
+                    onImageSettings = {},
+                    onTextSettings = {},
+                    onChapterOrder = {},
+                    onDismissChapterError = {},
+                    onDismissPageError = {},
+                )
+            }
+        }
+        val content = composeRule.onNodeWithTag("image-reader-scroll")
+        content.assertIsFocused().performKeyInput { pressKey(Key.DirectionDown) }
+        composeRule.onNodeWithTag("reader-image-loading-more-scroll").assertExists()
+        composeRule.runOnIdle {
+            assertEquals(1, loadMoreRequests)
+            state = state.copy(
+                content = state.content.copy(images = images),
+                isLoadingMore = false,
+                imagesExhausted = true,
+            )
+        }
+
+        content.assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.onNodeWithText("第 2 / 3 页").assertExists()
+        control("章节").assertIsFocused()
+        pressBack()
+        content.assertIsFocused().performKeyInput { pressKey(Key.DirectionDown) }
+        composeRule.waitForIdle()
+        content.performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.onNodeWithText("第 3 / 3 页").assertExists()
+        pressBack()
+        content.assertIsFocused().performKeyInput { pressKey(Key.DirectionUp) }
+        composeRule.waitForIdle()
+        content.performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.onNodeWithText("第 2 / 3 页").assertExists()
+        composeRule.runOnIdle { assertEquals(1, loadMoreRequests) }
+    }
+
+    @Test
     fun imagePagingDoesNotRevealHiddenTitle() {
         composeRule.mainClock.autoAdvance = false
         setReader(

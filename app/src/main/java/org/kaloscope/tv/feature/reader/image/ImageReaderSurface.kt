@@ -193,7 +193,8 @@ private fun ScrollingImages(
             .distinctUntilChanged()
             .collect(preloadController::updateTarget)
     }
-    LaunchedEffect(contentRevision, listState, content.images.isEmpty()) {
+    // Appended images change the position callback's bounds, even at the same visible index.
+    LaunchedEffect(contentRevision, listState, content.images.size) {
         snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { index ->
