@@ -84,7 +84,8 @@ class MediaDetailCoordinator(
         mutableState.value = content.copy(
             focusedChildId = childId,
             focusedChildDetail = cachedDetail,
-            childDetailError = null,
+            // Focus changes must not hide authentication failures before root session handling.
+            childDetailError = content.childDetailError?.takeIf { it == AppError.Unauthorized },
         )
     }
 

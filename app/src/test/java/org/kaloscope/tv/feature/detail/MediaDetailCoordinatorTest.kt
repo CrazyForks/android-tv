@@ -5,7 +5,9 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.kaloscope.tv.app.hasUnauthorized
 import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.GridViewportSnapshot
@@ -258,6 +260,92 @@ class MediaDetailCoordinatorTest {
         assertEquals(selected, content.focusedChildDetail)
         assertEquals(AppError.Unauthorized, content.childDetailError)
         assertEquals(listOf(201L, 300L, 301L, 302L), repository.detailCalls)
+    }
+
+    @Test
+    fun `initial episode focus preserves authentication failure until reset`() = runBlocking {
+        val parent = detail(201, children = listOf(summary(301)))
+        val repository = DetailFakeRepository(
+            mutableListOf(
+                AppResult.Success(parent),
+                AppResult.Failure(AppError.Unauthorized),
+            ),
+        )
+        val coordinator = MediaDetailCoordinator(repository)
+        coordinator.load(session(), 201)
+        val failed = coordinator.state.value
+
+        coordinator.rememberFocusedChild(301)
+
+        assertEquals(failed, coordinator.state.value)
+        assertTrue(coordinator.state.value.hasUnauthorized())
+        coordinator.loadFocusedChildAndNeighbors(session(), 301)
+        assertEquals(listOf(201L, 301L), repository.detailCalls)
+
+        coordinator.reset()
+        assertEquals(MediaDetailUiState.Loading, coordinator.state.value)
+    }
+
+    @Test
+    fun `moving focus preserves a neighbor authentication failure`() = runBlocking {
+        val parent = detail(201, children = listOf(summary(301), summary(302), summary(303)))
+        val first = detail(301)
+        val second = detail(302)
+        val repository = DetailFakeRepository(
+            mutableListOf(
+                AppResult.Success(parent),
+                AppResult.Success(first),
+                AppResult.Success(second),
+                AppResult.Failure(AppError.Unauthorized),
+            ),
+        )
+        val coordinator = MediaDetailCoordinator(repository)
+        coordinator.load(session(), 201)
+        coordinator.rememberFocusedChild(302)
+        coordinator.loadFocusedChildAndNeighbors(session(), 302)
+        val failed = coordinator.state.value as MediaDetailUiState.Content
+
+        for ((childId, cachedDetail) in listOf(301L to first, 303L to null)) {
+            coordinator.rememberFocusedChild(childId)
+
+            assertEquals(
+                failed.copy(focusedChildId = childId, focusedChildDetail = cachedDetail),
+                coordinator.state.value,
+            )
+            assertTrue(coordinator.state.value.hasUnauthorized())
+            coordinator.loadFocusedChildAndNeighbors(session(), childId)
+            assertEquals(listOf(201L, 301L, 302L, 303L), repository.detailCalls)
+        }
+    }
+
+    @Test
+    fun `refocusing an episode clears ordinary errors and allows retry`() = runBlocking {
+        val parent = detail(201, children = listOf(summary(301)))
+        val child = detail(301)
+        for (error in listOf(AppError.Offline, AppError.Forbidden)) {
+            val repository = DetailFakeRepository(
+                mutableListOf(
+                    AppResult.Success(parent),
+                    AppResult.Failure(error),
+                    AppResult.Success(child),
+                ),
+            )
+            val coordinator = MediaDetailCoordinator(repository)
+            coordinator.load(session(), 201)
+
+            coordinator.rememberFocusedChild(301)
+            coordinator.loadFocusedChildAndNeighbors(session(), 301)
+
+            assertEquals(
+                MediaDetailUiState.Content(
+                    parent = parent,
+                    focusedChildId = 301,
+                    focusedChildDetail = child,
+                ),
+                coordinator.state.value,
+            )
+            assertEquals(listOf(201L, 301L, 301L), repository.detailCalls)
+        }
     }
 
     @Test
