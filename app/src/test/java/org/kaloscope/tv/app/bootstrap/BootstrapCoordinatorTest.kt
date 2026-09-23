@@ -1,10 +1,21 @@
 package org.kaloscope.tv.app.bootstrap
 
 import java.io.IOException
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -13,8 +24,11 @@ import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.SavedServer
 import org.kaloscope.tv.core.model.Session
 import org.kaloscope.tv.core.model.SessionUser
+import org.kaloscope.tv.core.network.networkCall
 import org.kaloscope.tv.core.storage.ServerStore
 import org.kaloscope.tv.data.auth.SessionRepository
+import retrofit2.HttpException
+import retrofit2.Response
 
 class BootstrapCoordinatorTest {
     @Test
@@ -80,6 +94,48 @@ class BootstrapCoordinatorTest {
 
         assertEquals(BootstrapState.ConnectionError(server, AppError.Offline), state)
         assertFalse(data.tokenCleared)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `cancelled validation cannot clear a token from a queued authorization error`() = runTest {
+        val response = PendingValidation()
+        val data = FakeBootstrapData(
+            servers = listOf(savedServer()),
+            token = "saved-token",
+            pendingValidation = response,
+        )
+        var resolved: BootstrapState? = null
+        val job = launch { resolved = BootstrapCoordinator(data, data).resolve() }
+        runCurrent()
+
+        response.failUnauthorized()
+        job.cancel()
+        runCurrent()
+
+        assertEquals(1, data.validationCount)
+        assertFalse(data.tokenCleared)
+        assertNull(resolved)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `active validation clears an unauthorized token from a queued error`() = runTest {
+        val server = savedServer()
+        val response = PendingValidation()
+        val data = FakeBootstrapData(
+            servers = listOf(server),
+            token = "saved-token",
+            pendingValidation = response,
+        )
+        val result = async { BootstrapCoordinator(data, data).resolve() }
+        runCurrent()
+
+        response.failUnauthorized()
+
+        assertEquals(BootstrapState.NeedsLogin(server), result.await())
+        assertEquals(1, data.validationCount)
+        assertTrue(data.tokenCleared)
     }
 
     @Test
@@ -180,6 +236,7 @@ private class FakeBootstrapData(
     private val activeServerId: String? = servers.firstOrNull()?.id,
     private val token: String? = null,
     private val validation: AppResult<Session> = AppResult.Failure(AppError.Offline),
+    private val pendingValidation: PendingValidation? = null,
 ) : ServerStore, SessionRepository {
     var tokenCleared = false
     var validationCount = 0
@@ -217,12 +274,28 @@ private class FakeBootstrapData(
 
     override suspend fun validate(server: SavedServer, token: String): AppResult<Session> {
         validationCount += 1
-        return validation
+        return pendingValidation?.await() ?: validation
     }
 
     override suspend fun clearToken(serverId: String) {
         tokenClearFailure?.let { throw it }
         tokenCleared = true
+    }
+}
+
+private class PendingValidation {
+    private var continuation: CancellableContinuation<Session>? = null
+
+    suspend fun await(): AppResult<Session> = networkCall(Json) {
+        // Keep the real cancellable callback bridge and HTTP error mapping.
+        suspendCancellableCoroutine { continuation = it }
+    }
+
+    fun failUnauthorized() {
+        checkNotNull(continuation).resumeWithException(
+            HttpException(Response.error<Unit>(401, "".toResponseBody())),
+        )
+        continuation = null
     }
 }
 

@@ -1,6 +1,8 @@
 package org.kaloscope.tv.app.bootstrap
 
 import java.io.IOException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.storage.ServerStore
@@ -24,7 +26,10 @@ class BootstrapCoordinator(
                 return BootstrapState.NeedsLogin(activeServer)
             }
 
-            when (val result = sessionRepository.validate(activeServer, token)) {
+            val result = sessionRepository.validate(activeServer, token)
+            // A queued HTTP failure must not clear a token after validation is cancelled.
+            currentCoroutineContext().ensureActive()
+            when (result) {
                 is AppResult.Success -> BootstrapState.Ready(result.value)
                 is AppResult.Failure -> {
                     // Only authentication failures invalidate a stored session.
