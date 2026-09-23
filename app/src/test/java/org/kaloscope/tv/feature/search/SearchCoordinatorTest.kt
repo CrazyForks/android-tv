@@ -3,6 +3,7 @@ package org.kaloscope.tv.feature.search
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -672,6 +673,126 @@ class SearchCoordinatorTest {
     }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `cancelled resolution drops queued errors and clears its loading state`() = runTest {
+        val response = PendingNetworkResponse<ResolvedNetworkResource>()
+        val coordinator = coordinator(
+            repository = FakeSearchRepository(
+                pages = mutableListOf(AppResult.Success(page("v1"))),
+            ),
+            resourceRepository = FakeNetworkResourceRepository(pendingResolution = response),
+        )
+        coordinator.load(session())
+        coordinator.updateQuery("video")
+        coordinator.search(session())
+        val original = coordinator.state.value
+        var completedNormally = false
+        val job = launch {
+            coordinator.openResult(session(), "v1")
+            completedNormally = true
+        }
+        runCurrent()
+
+        response.failUnauthorized()
+        job.cancel()
+        runCurrent()
+
+        assertEquals(original, coordinator.state.value)
+        assertFalse(coordinator.state.value.hasUnauthorized())
+        assertFalse(completedNormally)
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `reset and reload ignore a cancelled resolution error`() = runTest {
+        val response = PendingNetworkResponse<ResolvedNetworkResource>()
+        val coordinator = coordinator(
+            repository = FakeSearchRepository(
+                pages = mutableListOf(AppResult.Success(page("v1"))),
+            ),
+            resourceRepository = FakeNetworkResourceRepository(pendingResolution = response),
+        )
+        coordinator.load(session())
+        coordinator.updateQuery("video")
+        coordinator.search(session())
+        val job = launch { coordinator.openResult(session(), "v1") }
+        runCurrent()
+
+        response.failUnauthorized()
+        job.cancel()
+        coordinator.reset()
+        val nextSession = session().copy(server = session().server.copy(id = "other-server"))
+        coordinator.load(nextSession)
+        val reloaded = coordinator.state.value
+        runCurrent()
+
+        assertEquals(reloaded, coordinator.state.value)
+        assertFalse(coordinator.state.value.hasUnauthorized())
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `active resolution retains queued authorization errors for root handling`() = runTest {
+        val response = PendingNetworkResponse<ResolvedNetworkResource>()
+        val coordinator = coordinator(
+            repository = FakeSearchRepository(
+                pages = mutableListOf(AppResult.Success(page("v1"))),
+            ),
+            resourceRepository = FakeNetworkResourceRepository(pendingResolution = response),
+        )
+        coordinator.load(session())
+        coordinator.updateQuery("video")
+        coordinator.search(session())
+        val original = coordinator.state.value as SearchUiState.Content
+        val job = launch { coordinator.openResult(session(), "v1") }
+        runCurrent()
+
+        response.failUnauthorized()
+        job.join()
+
+        assertEquals(
+            original.copy(resolutionError = AppError.Unauthorized),
+            coordinator.state.value,
+        )
+        assertTrue(coordinator.state.value.hasUnauthorized())
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `cancelled resolution cleanup preserves an immediate retry of the same result`() = runTest {
+        val response = CompletableDeferred<AppResult<ResolvedNetworkResource>>()
+        val coordinator = coordinator(
+            repository = FakeSearchRepository(
+                pages = mutableListOf(AppResult.Success(page("v1"))),
+            ),
+            resourceRepository = FakeNetworkResourceRepository(deferredResolution = response),
+        )
+        coordinator.load(session())
+        coordinator.updateQuery("video")
+        coordinator.search(session())
+        val cancelledJob = launch { coordinator.openResult(session(), "v1") }
+        runCurrent()
+
+        assertTrue(coordinator.cancelResolution())
+        cancelledJob.cancel()
+        // Main.immediate can start a retry before the old cancellation resumes.
+        val retryJob = launch(start = CoroutineStart.UNDISPATCHED) {
+            coordinator.openResult(session(), "v1")
+        }
+        val retrying = coordinator.state.value
+        runCurrent()
+
+        assertEquals(retrying, coordinator.state.value)
+        assertEquals("v1", (coordinator.state.value as SearchUiState.Content).resolvingResultId)
+        response.complete(AppResult.Success(ResolvedNetworkResource.Video(playback())))
+        retryJob.join()
+        assertEquals(
+            SearchPendingDestination.Player("request-id"),
+            (coordinator.state.value as SearchUiState.Content).pendingDestination,
+        )
+    }
+
+    @Test
     fun `explicit cancellation prevents a delayed playback destination`() = runTest {
         val resolutionStarted = CompletableDeferred<Unit>()
         val resolutionResult = CompletableDeferred<AppResult<ResolvedNetworkResource>>()
@@ -713,6 +834,7 @@ private class FakeNetworkResourceRepository(
         AppResult.Failure(AppError.NotFound),
     private val resolutionStarted: CompletableDeferred<Unit>? = null,
     private val deferredResolution: CompletableDeferred<AppResult<ResolvedNetworkResource>>? = null,
+    private val pendingResolution: PendingNetworkResponse<ResolvedNetworkResource>? = null,
 ) : NetworkResourceRepository {
     var preferredDefinition: TranscodeResolution? = null
         private set
@@ -725,7 +847,7 @@ private class FakeNetworkResourceRepository(
     ): AppResult<ResolvedNetworkResource> {
         this.preferredDefinition = preferredDefinition
         resolutionStarted?.complete(Unit)
-        return deferredResolution?.await() ?: resolution
+        return pendingResolution?.await() ?: deferredResolution?.await() ?: resolution
     }
 
     override suspend fun resolveVideoChapter(

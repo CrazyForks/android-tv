@@ -311,10 +311,15 @@ class SearchCoordinator(
                 indexerId = content.selectedIndexerId,
                 result = result,
                 preferredDefinition = TranscodeResolution.P1080,
-            )
+            ).also {
+                currentCoroutineContext().ensureActive()
+            }
         } catch (error: CancellationException) {
             updateContent {
-                if (resolvingResultId == resultId) {
+                if (
+                    generation == resolutionGeneration &&
+                    resolvingResultId == resultId
+                ) {
                     copy(resolvingResultId = null)
                 } else {
                     this
