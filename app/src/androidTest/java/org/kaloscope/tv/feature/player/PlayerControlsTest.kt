@@ -2051,6 +2051,116 @@ class PlayerControlsTest {
     }
 
     @Test
+    fun unknownDurationRevealsActionsAndFocusesPlayPause() {
+        var durationMillis by mutableStateOf(0L)
+        var actionRowVisible by mutableStateOf(false)
+        var playPauseClicks = 0
+
+        composeRule.setContent {
+            MaterialTheme {
+                PlayerControls(
+                    state = controlsState().copy(durationMillis = durationMillis),
+                    actionRowVisible = actionRowVisible,
+                    onActionRowVisibilityChange = { actionRowVisible = it },
+                    playFocus = remember { FocusRequester() },
+                    definitionFocus = remember { FocusRequester() },
+                    settingsFocus = remember { FocusRequester() },
+                    subtitleFocus = remember { FocusRequester() },
+                    speedFocus = remember { FocusRequester() },
+                    onPrevious = {},
+                    onRewind = {},
+                    onPlayPause = { playPauseClicks += 1 },
+                    onForward = {},
+                    onNext = {},
+                    onToggleSubtitles = {},
+                    onOpenSpeed = {},
+                    onToggleDanmakus = {},
+                    onOpenSettings = {},
+                    onOpenDefinitions = {},
+                    onSeekPreviewBy = {},
+                    onSeekPreviewFinished = {},
+                    onHideControls = {},
+                    onInteraction = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("player-control-row").assertIsDisplayed()
+        composeRule.onNodeWithTag("player-progress").assertIsNotEnabled()
+        composeRule.onNodeWithTag("player-play-pause")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.runOnIdle { assertEquals(1, playPauseClicks) }
+        composeRule.onNodeWithTag("player-play-pause")
+            .performKeyInput { pressKey(Key.DirectionRight) }
+        composeRule.onNodeWithTag("player-forward")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionLeft) }
+        composeRule.onNodeWithTag("player-play-pause")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionUp) }
+            .assertIsFocused()
+
+        composeRule.runOnIdle { durationMillis = 60_000L }
+
+        composeRule.onNodeWithTag("player-control-row").assertIsDisplayed()
+        composeRule.onNodeWithTag("player-play-pause")
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionUp) }
+        composeRule.onNodeWithTag("player-progress").assertIsFocused()
+        composeRule.onNodeWithTag("player-control-row").assertDoesNotExist()
+
+        composeRule.runOnIdle { durationMillis = 0L }
+
+        composeRule.onNodeWithTag("player-control-row").assertIsDisplayed()
+        composeRule.onNodeWithTag("player-play-pause").assertIsFocused()
+    }
+
+    @Test
+    fun unknownDurationDoesNotStealFocusFromVisibleActions() {
+        var durationMillis by mutableStateOf(60_000L)
+        var actionRowVisible by mutableStateOf(true)
+
+        composeRule.setContent {
+            MaterialTheme {
+                PlayerControls(
+                    state = controlsState().copy(durationMillis = durationMillis),
+                    actionRowVisible = actionRowVisible,
+                    onActionRowVisibilityChange = { actionRowVisible = it },
+                    playFocus = remember { FocusRequester() },
+                    definitionFocus = remember { FocusRequester() },
+                    settingsFocus = remember { FocusRequester() },
+                    subtitleFocus = remember { FocusRequester() },
+                    speedFocus = remember { FocusRequester() },
+                    onPrevious = {},
+                    onRewind = {},
+                    onPlayPause = {},
+                    onForward = {},
+                    onNext = {},
+                    onToggleSubtitles = {},
+                    onOpenSpeed = {},
+                    onToggleDanmakus = {},
+                    onOpenSettings = {},
+                    onOpenDefinitions = {},
+                    onSeekPreviewBy = {},
+                    onSeekPreviewFinished = {},
+                    onHideControls = {},
+                    onInteraction = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("player-settings")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .assertIsFocused()
+
+        composeRule.runOnIdle { durationMillis = 0L }
+
+        composeRule.onNodeWithTag("player-progress").assertIsNotEnabled()
+        composeRule.onNodeWithTag("player-settings").assertIsFocused()
+    }
+
+    @Test
     fun infoPreviewKeepsProgressAtBottomAndOmitsTransportActions() {
         lateinit var density: Density
 

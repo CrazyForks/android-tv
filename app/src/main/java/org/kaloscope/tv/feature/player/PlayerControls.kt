@@ -341,6 +341,13 @@ internal fun PlayerControls(
     } else {
         danmakuLabel
     }
+    LaunchedEffect(state.durationMillis > 0, actionRowVisible) {
+        if (state.durationMillis <= 0 && !actionRowVisible) {
+            // The disabled progress bar cannot hold focus when the duration is unknown.
+            onActionRowVisibilityChange(true)
+            playFocusRequestVersion += 1
+        }
+    }
     LaunchedEffect(playFocusRequestVersion) {
         if (playFocusRequestVersion > 0) {
             withFrameNanos { }
