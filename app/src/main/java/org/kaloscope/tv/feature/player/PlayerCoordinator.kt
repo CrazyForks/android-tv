@@ -206,6 +206,8 @@ class PlayerCoordinator(
 
     fun reportProgressFailure(mediaId: Long, error: AppError) {
         val content = mutableState.value as? PlayerUiState.Content ?: return
+        // Auth failures must remain visible until the root clears the session.
+        if (content.progressError == AppError.Unauthorized) return
         progressErrorMediaId = mediaId
         mutableState.value = content.copy(progressError = error)
     }

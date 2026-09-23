@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.kaloscope.tv.app.hasUnauthorized
 import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.DanmakuComment
@@ -223,6 +224,48 @@ class PlayerCoordinatorTest {
         coordinator.reportProgressSaved(request.mediaId)
 
         assertEquals(failed, coordinator.state.value)
+    }
+
+    @Test
+    fun `later progress failures preserve authorization failure for root handling`() = runTest {
+        val request = request()
+        val store = PlaybackRequestStore().apply { put(request) }
+        val coordinator = PlayerCoordinator(store, FakeMediaRepository())
+        coordinator.load(session(), request.requestId)
+        coordinator.reportProgressFailure(request.mediaId, AppError.Unauthorized)
+        val unauthorized = coordinator.state.value
+
+        for (mediaId in listOf(request.mediaId, 302L)) {
+            for (error in listOf(AppError.Offline, AppError.Timeout, AppError.Forbidden)) {
+                coordinator.reportProgressFailure(mediaId, error)
+
+                assertEquals(unauthorized, coordinator.state.value)
+                assertTrue(coordinator.state.value.hasUnauthorized())
+
+                coordinator.reportProgressSaved(mediaId)
+
+                assertEquals(unauthorized, coordinator.state.value)
+            }
+        }
+    }
+
+    @Test
+    fun `later ordinary progress failure updates the warning and its recovery media`() = runTest {
+        val request = request()
+        val store = PlaybackRequestStore().apply { put(request) }
+        val coordinator = PlayerCoordinator(store, FakeMediaRepository())
+        coordinator.load(session(), request.requestId)
+        val original = coordinator.state.value as PlayerUiState.Content
+
+        coordinator.reportProgressFailure(request.mediaId, AppError.Offline)
+        coordinator.reportProgressFailure(302L, AppError.Timeout)
+
+        val failed = original.copy(progressError = AppError.Timeout)
+        assertEquals(failed, coordinator.state.value)
+        coordinator.reportProgressSaved(request.mediaId)
+        assertEquals(failed, coordinator.state.value)
+        coordinator.reportProgressSaved(302L)
+        assertEquals(original, coordinator.state.value)
     }
 
     @Test
