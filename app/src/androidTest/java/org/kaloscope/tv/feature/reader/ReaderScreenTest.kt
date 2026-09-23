@@ -1422,6 +1422,16 @@ class ReaderScreenTest {
     }
 
     @Test
+    fun switchingFromScrollToPagedKeepsTheCurrentImage() {
+        assertReadModeSwitchKeepsPosition(ImageReadMode.Scroll)
+    }
+
+    @Test
+    fun switchingFromPagedToScrollKeepsTheCurrentImage() {
+        assertReadModeSwitchKeepsPosition(ImageReadMode.Paged)
+    }
+
+    @Test
     fun textSettingChangePublishesTheGlobalPreference() {
         var state by mutableStateOf(textState(text = "正文"))
         var persisted: TextReaderSettings? = null
@@ -1630,6 +1640,88 @@ class ReaderScreenTest {
             useUnmergedTree = true,
         ).assertExists()
         composeRule.onNodeWithText("正在加载后续图片…").assertDoesNotExist()
+    }
+
+    private fun assertReadModeSwitchKeepsPosition(initialMode: ImageReadMode) {
+        val images = (1..3).map { "https://cdn.example.test/page-$it.jpg" }
+        var state by mutableStateOf(imageState(readMode = initialMode, images = images))
+        var exits = 0
+        val initiallyScrolling = initialMode == ImageReadMode.Scroll
+        val initialTag = if (initiallyScrolling) "image-reader-scroll" else "image-reader-paged"
+        val switchedTag = if (initiallyScrolling) "image-reader-paged" else "image-reader-scroll"
+        composeRule.setContent {
+            KaloscopeTheme {
+                ReaderScreen(
+                    session = session(),
+                    state = state,
+                    onBack = { exits += 1 },
+                    onSelectChapter = { index ->
+                        state = state.copy(
+                            content = state.content.copy(selectedChapterIndex = index),
+                            contentRevision = state.contentRevision + 1,
+                        )
+                    },
+                    onLoadMoreImages = {},
+                    onImageSettings = { state = state.copy(settings = it) },
+                    onTextSettings = {},
+                    onChapterOrder = {},
+                    onDismissChapterError = {},
+                    onDismissPageError = {},
+                )
+            }
+        }
+        val initialContent = composeRule.onNodeWithTag(initialTag)
+        initialContent.assertIsFocused().performKeyInput {
+            pressKey(if (initiallyScrolling) Key.DirectionDown else Key.DirectionRight)
+        }
+        composeRule.waitForIdle()
+        initialContent.performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.onNodeWithText("第 2 / 3 页").assertExists()
+        control("章节").assertIsFocused().performKeyInput { pressKey(Key.DirectionRight) }
+        control("阅读设置").assertIsFocused().performKeyInput { pressKey(Key.Enter) }
+        val modeSetting = composeRule.onNodeWithTag("reader-image-read-mode-setting")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+        composeRule.onNode(
+            hasClickAction() and
+                hasTextExactly(if (initiallyScrolling) "滚动" else "翻页") and
+                isFocused(),
+        ).performKeyInput {
+            pressKey(if (initiallyScrolling) Key.DirectionDown else Key.DirectionUp)
+            pressKey(Key.Enter)
+        }
+        composeRule.onNodeWithTag("kaloscope-choice-dialog-panel").assertDoesNotExist()
+        modeSetting.assertIsFocused()
+        pressBack()
+        control("阅读设置").assertIsFocused()
+        composeRule.onNodeWithText("第 2 / 3 页").assertExists()
+        pressBack()
+
+        val switchedContent = composeRule.onNodeWithTag(switchedTag).assertIsFocused()
+        if (!initiallyScrolling) {
+            val viewport = switchedContent.fetchSemanticsNode().boundsInRoot
+            val secondImage = composeRule.onNodeWithTag("reader-image-1")
+                .fetchSemanticsNode().boundsInRoot
+            assertEquals(viewport.top, secondImage.top, 1f)
+        }
+        switchedContent.performKeyInput {
+            pressKey(if (initiallyScrolling) Key.DirectionRight else Key.DirectionDown)
+        }
+        composeRule.waitForIdle()
+        switchedContent.performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.onNodeWithText("第 3 / 3 页").assertExists()
+        control("下一章")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+        composeRule.onNodeWithText("第三章").assertExists()
+        composeRule.onNodeWithText("第 1 / 3 页").assertExists()
+        if (!initiallyScrolling) {
+            val viewport = switchedContent.fetchSemanticsNode().boundsInRoot
+            val firstImage = composeRule.onNodeWithTag("reader-image-0")
+                .fetchSemanticsNode().boundsInRoot
+            assertEquals(viewport.top, firstImage.top, 1f)
+        }
+        composeRule.runOnIdle { assertEquals(0, exits) }
     }
 
     private fun assertPagedAppendPosition(

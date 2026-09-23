@@ -73,6 +73,7 @@ internal fun ImageReaderSurface(
     content: ReaderImageContent,
     settings: ImageReaderSettings,
     contentRevision: Long,
+    initialImageIndex: Int,
     imagesExhausted: Boolean,
     isLoadingMore: Boolean,
     controlsVisible: Boolean,
@@ -108,6 +109,7 @@ internal fun ImageReaderSurface(
                 content = content,
                 settings = settings,
                 contentRevision = contentRevision,
+                initialImageIndex = initialImageIndex,
                 imagesExhausted = imagesExhausted,
                 isLoadingMore = isLoadingMore,
                 controlsVisible = controlsVisible,
@@ -128,6 +130,7 @@ internal fun ImageReaderSurface(
                 content = content,
                 settings = settings,
                 contentRevision = contentRevision,
+                initialImageIndex = initialImageIndex,
                 imagesExhausted = imagesExhausted,
                 isLoadingMore = isLoadingMore,
                 controlsVisible = controlsVisible,
@@ -151,6 +154,7 @@ private fun ScrollingImages(
     content: ReaderImageContent,
     settings: ImageReaderSettings,
     contentRevision: Long,
+    initialImageIndex: Int,
     imagesExhausted: Boolean,
     isLoadingMore: Boolean,
     controlsVisible: Boolean,
@@ -165,7 +169,7 @@ private fun ScrollingImages(
     onFinalFailureChanged: (String, Boolean) -> Unit,
     preloadController: ReaderImagePreloadController,
 ) {
-    val listState = rememberLazyListState()
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialImageIndex)
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val viewportPixels = with(density) { viewportHeight.roundToPx() }.coerceAtLeast(1)
@@ -179,7 +183,8 @@ private fun ScrollingImages(
         mutableIntStateOf(content.images.size)
     }
     LaunchedEffect(contentRevision) {
-        listState.scrollToItem(0)
+        // Resume the current image on mode changes; a new chapter supplies index zero.
+        listState.scrollToItem(initialImageIndex)
         horizontalBias = 0f
     }
     LaunchedEffect(settings.zoomMode) { horizontalBias = 0f }
@@ -419,6 +424,7 @@ private fun PagedImages(
     content: ReaderImageContent,
     settings: ImageReaderSettings,
     contentRevision: Long,
+    initialImageIndex: Int,
     imagesExhausted: Boolean,
     isLoadingMore: Boolean,
     controlsVisible: Boolean,
@@ -432,7 +438,7 @@ private fun PagedImages(
     onFinalFailureChanged: (String, Boolean) -> Unit,
     preloadController: ReaderImagePreloadController,
 ) {
-    var index by remember(contentRevision) { mutableIntStateOf(0) }
+    var index by remember(contentRevision) { mutableIntStateOf(initialImageIndex) }
     var advanceAfterLoad by remember(contentRevision) { mutableStateOf(false) }
     var pageTransitioning by remember(contentRevision) { mutableStateOf(false) }
     val previousSize = remember(contentRevision) { mutableIntStateOf(content.images.size) }

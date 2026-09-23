@@ -258,6 +258,7 @@ class ReaderImageRetryTest {
                     content = content,
                     settings = settings,
                     contentRevision = contentRevision.longValue,
+                    initialImageIndex = 0,
                     imagesExhausted = true,
                     isLoadingMore = false,
                     controlsVisible = controlsVisible.value,

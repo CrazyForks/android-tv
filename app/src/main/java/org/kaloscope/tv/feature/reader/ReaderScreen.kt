@@ -303,6 +303,7 @@ private fun ActiveReader(
                 content = state.content,
                 settings = state.settings,
                 contentRevision = state.contentRevision,
+                initialImageIndex = (imagePosition - 1).coerceAtLeast(0),
                 imagesExhausted = state.imagesExhausted,
                 isLoadingMore = state.isLoadingMore,
                 controlsVisible = controlsVisible,
