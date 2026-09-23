@@ -979,6 +979,109 @@ class ReaderScreenTest {
     }
 
     @Test
+    fun closingChapterErrorRestoresTheLastVisibleControl() {
+        var state by mutableStateOf(textState(text = "正文"))
+        var chapterRequests = 0
+        var dismissals = 0
+        var exits = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                ReaderScreen(
+                    session = session(),
+                    state = state,
+                    onBack = { exits += 1 },
+                    onSelectChapter = {
+                        chapterRequests += 1
+                        state = state.copy(chapterError = AppError.Offline)
+                    },
+                    onLoadMoreImages = {},
+                    onImageSettings = {},
+                    onTextSettings = {},
+                    onChapterOrder = {},
+                    onDismissChapterError = {
+                        dismissals += 1
+                        state = state.copy(chapterError = null)
+                    },
+                    onDismissPageError = {},
+                )
+            }
+        }
+        val content = composeRule.onNodeWithTag("text-reader-content")
+        content.assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
+        control("下一章")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+        composeRule.onNodeWithTag("reader-recoverable-error").assertExists()
+        control("关闭")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+
+        composeRule.onNodeWithTag("reader-recoverable-error").assertDoesNotExist()
+        control("下一章").assertIsFocused()
+        composeRule.runOnIdle {
+            assertEquals(1, chapterRequests)
+            assertEquals(1, dismissals)
+            assertEquals(0, exits)
+        }
+        pressBack()
+        composeRule.onNodeWithTag("reader-bottom-controls").assertDoesNotExist()
+        content.assertIsFocused()
+        composeRule.runOnIdle { assertEquals(0, exits) }
+        pressBack()
+        composeRule.runOnIdle { assertEquals(1, exits) }
+    }
+
+    @Test
+    fun closingPageErrorRestoresReadingFocusWithoutOpeningControls() {
+        var state by mutableStateOf(
+            imageState(
+                images = listOf(
+                    "https://cdn.example.test/page-1.jpg",
+                    "https://cdn.example.test/page-2.jpg",
+                ),
+            ).copy(pageError = AppError.Offline),
+        )
+        var dismissals = 0
+        var loadMoreRequests = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                ReaderScreen(
+                    session = session(),
+                    state = state,
+                    onBack = {},
+                    onSelectChapter = {},
+                    onLoadMoreImages = { loadMoreRequests += 1 },
+                    onImageSettings = {},
+                    onTextSettings = {},
+                    onChapterOrder = {},
+                    onDismissChapterError = {},
+                    onDismissPageError = {
+                        dismissals += 1
+                        state = state.copy(pageError = null)
+                    },
+                )
+            }
+        }
+        composeRule.onNodeWithTag("image-reader-scroll").assertIsFocused()
+        control("关闭")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+
+        composeRule.onNodeWithTag("reader-recoverable-error").assertDoesNotExist()
+        composeRule.onNodeWithTag("reader-bottom-controls").assertDoesNotExist()
+        val content = composeRule.onNodeWithTag("image-reader-scroll")
+        content.assertIsFocused().performKeyInput { pressKey(Key.DirectionDown) }
+        composeRule.waitForIdle()
+        content.performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.onNodeWithText("第 2 / 2 页").assertExists()
+        control("章节").assertIsFocused()
+        composeRule.runOnIdle {
+            assertEquals(1, dismissals)
+            assertEquals(0, loadMoreRequests)
+        }
+    }
+
+    @Test
     fun chapterLoadingAllowsBackToExitReader() {
         var exits = 0
         setReader(
