@@ -52,15 +52,39 @@ class LibraryViewModelTest {
     }
 
     @Test
-    fun `reselecting current library preserves pending first page`() = runTest(dispatcher) {
+    fun `selection while libraries are loading preserves the catalog request`() = runTest(dispatcher) {
+        val libraries = CompletableDeferred<AppResult<List<MediaLibrary>>>()
+        repository.pendingLibraries = libraries
         viewModel.load(session())
         runCurrent()
+        assertEquals(LibraryUiState.Loading, viewModel.uiState.value)
 
         viewModel.selectLibrary(session(), 21)
         runCurrent()
+        libraries.complete(
+            AppResult.Success(listOf(MediaLibrary(21, "Library", MediaLibraryType.TvShow))),
+        )
+        runCurrent()
+
+        assertEquals(listOf(21L), repository.requests.map { it.libraryId })
+        repository.requests.single().result.complete(AppResult.Success(page(201)))
+        runCurrent()
+        val content = viewModel.uiState.value as LibraryUiState.Content
+        assertEquals(listOf(201L), content.items.items.map { it.id })
+    }
+
+    @Test
+    fun `current or unknown library selection preserves pending first page`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+
+        for (libraryId in listOf(21L, 999L)) {
+            viewModel.selectLibrary(session(), libraryId)
+            runCurrent()
+        }
 
         val request = repository.requests.single()
-        assertFalse("Selecting the current library must keep its request active", request.cancelled)
+        assertFalse("A no-op selection must keep the first page active", request.cancelled)
         request.result.complete(AppResult.Success(page(201)))
         runCurrent()
 
@@ -69,7 +93,7 @@ class LibraryViewModelTest {
     }
 
     @Test
-    fun `reselecting current library preserves pending next page`() = runTest(dispatcher) {
+    fun `current or unknown library selection preserves pending next page`() = runTest(dispatcher) {
         viewModel.load(session())
         runCurrent()
         repository.requests.single().result.complete(AppResult.Success(page(201, hasNext = true)))
@@ -77,12 +101,14 @@ class LibraryViewModelTest {
         viewModel.loadNext(session())
         runCurrent()
 
-        viewModel.selectLibrary(session(), 21)
-        runCurrent()
+        for (libraryId in listOf(21L, 999L)) {
+            viewModel.selectLibrary(session(), libraryId)
+            runCurrent()
+        }
 
         assertEquals(listOf(1, 2), repository.requests.map { it.pageNumber })
         val request = repository.requests.last()
-        assertFalse("Selecting the current library must keep pagination active", request.cancelled)
+        assertFalse("A no-op selection must keep pagination active", request.cancelled)
         request.result.complete(AppResult.Success(page(202, pageNumber = 2)))
         runCurrent()
 

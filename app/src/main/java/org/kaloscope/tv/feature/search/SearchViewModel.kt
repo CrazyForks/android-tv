@@ -51,8 +51,12 @@ class SearchViewModel @Inject constructor(
         session: Session,
         indexerId: Long,
     ) {
-        // A no-op selection must not cancel the current page request.
-        if ((uiState.value as? SearchUiState.Content)?.selectedIndexerId == indexerId) {
+        // A no-op selection must not cancel the current request.
+        val content = uiState.value as? SearchUiState.Content ?: return
+        if (
+            content.selectedIndexerId == indexerId ||
+            content.profiles.none { it.indexer.id == indexerId }
+        ) {
             return
         }
         startRequest { coordinator.selectIndexer(session, indexerId) }

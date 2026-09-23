@@ -66,15 +66,47 @@ class SearchViewModelTest {
     }
 
     @Test
-    fun `reselecting current indexer preserves pending first page`() = runTest(dispatcher) {
+    fun `selection while indexers are loading preserves the catalog request`() = runTest(dispatcher) {
+        val profiles = CompletableDeferred<AppResult<List<IndexerSourceProfile>>>()
+        repository.pendingProfiles = profiles
         viewModel.load(session())
         runCurrent()
+        assertEquals(SearchUiState.Loading, viewModel.uiState.value)
 
         viewModel.selectIndexer(session(), 11)
         runCurrent()
+        profiles.complete(
+            AppResult.Success(
+                listOf(
+                    IndexerSourceProfile(
+                        indexer = NetworkIndexer(11, "Indexer", null),
+                        pageSize = 20,
+                        keywordRequired = false,
+                    ),
+                ),
+            ),
+        )
+        runCurrent()
+
+        assertEquals(listOf(11L), repository.requests.map { it.indexerId })
+        repository.requests.single().result.complete(AppResult.Success(page("v1")))
+        runCurrent()
+        val content = viewModel.uiState.value as SearchUiState.Content
+        assertEquals(listOf("v1"), content.results.items.map { it.id })
+    }
+
+    @Test
+    fun `current or unknown indexer selection preserves pending first page`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+
+        for (indexerId in listOf(11L, 999L)) {
+            viewModel.selectIndexer(session(), indexerId)
+            runCurrent()
+        }
 
         val request = repository.requests.single()
-        assertFalse("Selecting the current indexer must keep its request active", request.cancelled)
+        assertFalse("A no-op selection must keep the first page active", request.cancelled)
         request.result.complete(AppResult.Success(page("v1")))
         runCurrent()
 
@@ -83,7 +115,7 @@ class SearchViewModelTest {
     }
 
     @Test
-    fun `reselecting current indexer preserves pending next page`() = runTest(dispatcher) {
+    fun `current or unknown indexer selection preserves pending next page`() = runTest(dispatcher) {
         viewModel.load(session())
         runCurrent()
         repository.requests.single().result.complete(AppResult.Success(page("v1", hasNext = true)))
@@ -91,12 +123,14 @@ class SearchViewModelTest {
         viewModel.loadNext(session())
         runCurrent()
 
-        viewModel.selectIndexer(session(), 11)
-        runCurrent()
+        for (indexerId in listOf(11L, 999L)) {
+            viewModel.selectIndexer(session(), indexerId)
+            runCurrent()
+        }
 
         assertEquals(listOf(1, 2), repository.requests.map { it.pageNumber })
         val request = repository.requests.last()
-        assertFalse("Selecting the current indexer must keep pagination active", request.cancelled)
+        assertFalse("A no-op selection must keep pagination active", request.cancelled)
         request.result.complete(AppResult.Success(page("v2", pageNumber = 2)))
         runCurrent()
 
@@ -338,10 +372,11 @@ class SearchViewModelTest {
 
 private class PendingSearchRepository : SearchRepository {
     val requests = mutableListOf<PendingSearchPage>()
+    var pendingProfiles: CompletableDeferred<AppResult<List<IndexerSourceProfile>>>? = null
 
     override suspend fun getAvailableProfiles(
         session: Session,
-    ): AppResult<List<IndexerSourceProfile>> = AppResult.Success(
+    ): AppResult<List<IndexerSourceProfile>> = pendingProfiles?.await() ?: AppResult.Success(
         listOf(11L, 12L).map { id ->
             IndexerSourceProfile(
                 indexer = NetworkIndexer(id, "站点 $id", null),

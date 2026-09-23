@@ -42,8 +42,12 @@ class LibraryViewModel @Inject constructor(
         session: Session,
         libraryId: Long,
     ) {
-        // A no-op selection must not cancel the current page request.
-        if ((uiState.value as? LibraryUiState.Content)?.selectedLibraryId == libraryId) {
+        // A no-op selection must not cancel the current request.
+        val content = uiState.value as? LibraryUiState.Content ?: return
+        if (
+            content.selectedLibraryId == libraryId ||
+            content.libraries.none { it.id == libraryId }
+        ) {
             return
         }
         startRequest { coordinator.selectLibrary(session, libraryId) }
