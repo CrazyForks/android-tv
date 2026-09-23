@@ -1478,6 +1478,16 @@ class ReaderScreenTest {
     }
 
     @Test
+    fun scrollingRetryKeepsThePositionChosenAfterLoadingFailed() {
+        assertScrollingRetryPosition(navigateBack = true, expectedPosition = 1)
+    }
+
+    @Test
+    fun scrollingRetryAdvancesWhenTheReaderStaysOnTheLastImage() {
+        assertScrollingRetryPosition(navigateBack = false, expectedPosition = 3)
+    }
+
+    @Test
     fun textSettingChangePublishesTheGlobalPreference() {
         var state by mutableStateOf(textState(text = "正文"))
         var persisted: TextReaderSettings? = null
@@ -1909,6 +1919,90 @@ class ReaderScreenTest {
         pressBack()
         content.assertIsFocused().performKeyInput { pressKey(Key.DirectionRight) }
         composeRule.mainClock.advanceTimeBy(250)
+        content.performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.onNodeWithText("第 ${expectedPosition + 1} / 4 页").assertExists()
+        composeRule.runOnIdle { assertEquals(2, loadMoreRequests) }
+    }
+
+    private fun assertScrollingRetryPosition(navigateBack: Boolean, expectedPosition: Int) {
+        val images = (1..4).map { "https://cdn.example.test/page-$it.jpg" }
+        var state by mutableStateOf(
+            imageState(images = images.take(2)).let {
+                it.copy(
+                    content = it.content.copy(imageCount = images.size),
+                    imagesExhausted = false,
+                )
+            },
+        )
+        var loadMoreRequests = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                ReaderScreen(
+                    session = session(),
+                    state = state,
+                    onBack = {},
+                    onSelectChapter = {},
+                    onLoadMoreImages = {
+                        loadMoreRequests += 1
+                        state = state.copy(isLoadingMore = true, pageError = null)
+                    },
+                    onImageSettings = {},
+                    onTextSettings = {},
+                    onChapterOrder = {},
+                    onDismissChapterError = {},
+                    onDismissPageError = {},
+                )
+            }
+        }
+        val content = composeRule.onNodeWithTag("image-reader-scroll")
+        val viewportTop = content.fetchSemanticsNode().boundsInRoot.top
+        fun assertImageAtTop(index: Int) {
+            val imageTop = composeRule.onNodeWithTag("reader-image-$index")
+                .fetchSemanticsNode().boundsInRoot.top
+            assertEquals(viewportTop, imageTop, 1f)
+        }
+        content.assertIsFocused().performKeyInput { pressKey(Key.DirectionDown) }
+        composeRule.waitForIdle()
+        content.performKeyInput { pressKey(Key.DirectionDown) }
+        composeRule.onNodeWithTag("reader-image-loading-more-scroll").assertExists()
+        composeRule.runOnIdle {
+            assertEquals(1, loadMoreRequests)
+            state = state.copy(isLoadingMore = false, pageError = AppError.Offline)
+        }
+        composeRule.onNodeWithTag("reader-recoverable-error").assertExists()
+        if (navigateBack) {
+            content.assertIsFocused().performKeyInput { pressKey(Key.DirectionUp) }
+            composeRule.waitForIdle()
+            assertImageAtTop(0)
+        }
+        content.performKeyInput { pressKey(Key.DirectionCenter) }
+        val positionBeforeRetry = if (navigateBack) 1 else 2
+        composeRule.onNodeWithText("第 $positionBeforeRetry / 4 页").assertExists()
+        control("重试")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.Enter) }
+        composeRule.waitForIdle()
+        composeRule.runOnIdle { assertEquals(2, loadMoreRequests) }
+        if (navigateBack) {
+            // Loading must preserve the chosen viewport, not just restore it on success.
+            assertImageAtTop(0)
+            composeRule.onNodeWithText("第 1 / 4 页").assertExists()
+        } else {
+            composeRule.onNodeWithTag("reader-image-loading-more-scroll").assertExists()
+        }
+        composeRule.runOnIdle {
+            state = state.copy(
+                content = state.content.copy(images = images),
+                isLoadingMore = false,
+                imagesExhausted = true,
+            )
+        }
+        composeRule.onNodeWithTag("reader-recoverable-error").assertDoesNotExist()
+        composeRule.onNodeWithText("第 $expectedPosition / 4 页").assertExists()
+        assertImageAtTop(expectedPosition - 1)
+        pressBack()
+        content.assertIsFocused().performKeyInput { pressKey(Key.DirectionDown) }
+        composeRule.waitForIdle()
         content.performKeyInput { pressKey(Key.DirectionCenter) }
         composeRule.onNodeWithText("第 ${expectedPosition + 1} / 4 页").assertExists()
         composeRule.runOnIdle { assertEquals(2, loadMoreRequests) }

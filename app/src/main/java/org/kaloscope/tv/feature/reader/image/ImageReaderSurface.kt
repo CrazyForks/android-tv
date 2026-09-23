@@ -216,7 +216,7 @@ private fun ScrollingImages(
                 advanceAfterLoad = false
             }
 
-            isLoadingMore -> {
+            isLoadingMore && (advanceAfterLoad || content.images.isEmpty()) -> {
                 withFrameNanos { }
                 listState.animateScrollToItem(content.images.size)
             }
@@ -300,6 +300,8 @@ private fun ScrollingImages(
                 )
                 when (decision) {
                     is ContinuousImageScrollDecision.ScrollTo -> {
+                        // A new scroll supersedes the advance pending a pagination retry.
+                        advanceAfterLoad = false
                         scrollInProgress = true
                         scope.launch {
                             try {
@@ -314,6 +316,7 @@ private fun ScrollingImages(
                     }
 
                     is ContinuousImageScrollDecision.MeasurePreviousImage -> {
+                        advanceAfterLoad = false
                         scrollInProgress = true
                         scope.launch {
                             try {
