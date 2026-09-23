@@ -309,6 +309,24 @@ class ReaderScreenTest {
     }
 
     @Test
+    fun textConfirmationKeysOpenControlsOnlyOnRelease() {
+        assertReaderConfirmationKeys(textState(text = "正文"), "text-reader-content")
+    }
+
+    @Test
+    fun scrollingImageConfirmationKeysOpenControlsOnlyOnRelease() {
+        assertReaderConfirmationKeys(imageState(), "image-reader-scroll")
+    }
+
+    @Test
+    fun pagedImageConfirmationKeysOpenControlsOnlyOnRelease() {
+        assertReaderConfirmationKeys(
+            imageState(readMode = ImageReadMode.Paged),
+            "image-reader-paged",
+        )
+    }
+
+    @Test
     fun textBottomControlsShowIconsBesideEveryVisibleAction() {
         setReader(textState(text = "正文"))
 
@@ -1650,6 +1668,26 @@ class ReaderScreenTest {
             useUnmergedTree = true,
         ).assertExists()
         composeRule.onNodeWithText("正在加载后续图片…").assertDoesNotExist()
+    }
+
+    private fun assertReaderConfirmationKeys(state: ReaderUiState.Active, contentTag: String) {
+        var exits = 0
+        setReader(state, onBack = { exits += 1 })
+        val content = composeRule.onNodeWithTag(contentTag)
+        for (key in listOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)) {
+            content.assertIsFocused().performKeyInput { keyDown(key) }
+            composeRule.onNodeWithTag("reader-bottom-controls").assertDoesNotExist()
+
+            content.performKeyInput { keyUp(key) }
+
+            composeRule.onNodeWithTag("reader-bottom-controls").assertExists()
+            composeRule.onNodeWithTag("reader-chapter-drawer").assertDoesNotExist()
+            control("章节").assertIsFocused()
+            pressBack()
+            composeRule.onNodeWithTag("reader-bottom-controls").assertDoesNotExist()
+            content.assertIsFocused()
+        }
+        composeRule.runOnIdle { assertEquals(0, exits) }
     }
 
     private fun assertReadModeSwitchKeepsPosition(initialMode: ImageReadMode) {

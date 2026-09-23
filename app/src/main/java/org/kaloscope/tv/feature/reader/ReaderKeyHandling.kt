@@ -11,7 +11,7 @@ internal fun KeyEvent.consumeReaderControlKey(
     onToggleControls: () -> Unit,
     onEnterControls: () -> Unit,
 ): Boolean {
-    if (key == Key.DirectionCenter || key == Key.Enter) {
+    if (key == Key.DirectionCenter || key == Key.Enter || key == Key.NumPadEnter) {
         // Consume both edges, but toggle only on KeyUp so one press cannot fire twice.
         if (type == KeyEventType.KeyUp) {
             onToggleControls()
