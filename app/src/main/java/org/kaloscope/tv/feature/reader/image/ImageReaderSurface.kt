@@ -637,6 +637,8 @@ private fun ReaderRemoteImage(
     LaunchedEffect(manualRetryRevision) {
         if (
             manualRetryRevision > 0 &&
+            failed &&
+            !imageLoading &&
             automaticRetries >= MAX_AUTOMATIC_RETRIES &&
             imageRequest != null
         ) {

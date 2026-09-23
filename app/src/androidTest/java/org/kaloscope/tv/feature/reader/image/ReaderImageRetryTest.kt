@@ -12,10 +12,16 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.test.platform.app.InstrumentationRegistry
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import okio.Buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,6 +31,7 @@ import org.junit.Test
 import org.kaloscope.tv.app.KaloscopeTheme
 import org.kaloscope.tv.core.model.ImageReadMode
 import org.kaloscope.tv.core.model.ImageReaderSettings
+import org.kaloscope.tv.core.model.ImageZoomMode
 import org.kaloscope.tv.core.model.ReaderImageContent
 import org.kaloscope.tv.core.model.SavedServer
 import org.kaloscope.tv.core.model.Session
@@ -38,6 +45,7 @@ class ReaderImageRetryTest {
     private val failedImagesAvailable = mutableStateOf(false)
     private val contentRevision = mutableLongStateOf(0L)
     private val controlsVisible = mutableStateOf(false)
+    private val readerVisible = mutableStateOf(true)
 
     @Test
     fun automaticRetryReloadsTheSameUrlAfterFailure() {
@@ -103,6 +111,73 @@ class ReaderImageRetryTest {
     }
 
     @Test
+    fun manualRetryDoesNotReloadAnImageRecoveredByTheLastAutomaticRetry() {
+        MockWebServer().use { server ->
+            val recoveredRequests = AtomicInteger()
+            val failedRequests = AtomicInteger()
+            server.start()
+            val recoveredUrl = server.url("/recovered.png").toString()
+            val failedUrl = server.url("/failed.png").toString()
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse =
+                    when (request.requestUrl?.queryParameter("url")) {
+                        recoveredUrl -> if (recoveredRequests.incrementAndGet() <= 3) {
+                            MockResponse().setResponseCode(500)
+                        } else {
+                            imageResponse(width = 256)
+                        }
+                        failedUrl -> if (failedRequests.incrementAndGet() <= 4) {
+                            MockResponse().setResponseCode(500)
+                        } else {
+                            imageResponse(width = 256)
+                        }
+                        else -> MockResponse().setResponseCode(404)
+                    }
+            }
+            withUncachedImageLoader {
+                setReader(
+                    server = server,
+                    paths = listOf("/recovered.png", "/failed.png"),
+                    settings = ImageReaderSettings(
+                        readMode = ImageReadMode.Scroll,
+                        zoomMode = ImageZoomMode.FitWidth,
+                    ),
+                )
+                composeRule.waitUntil(10_000) {
+                    recoveredRequests.get() >= 4 && failedRequests.get() >= 4 &&
+                        failedImagesAvailable.value &&
+                        composeRule.onAllNodesWithTag("reader-image-0-loading")
+                            .fetchSemanticsNodes().isEmpty() &&
+                        composeRule.onAllNodesWithTag("reader-image-1-loading")
+                            .fetchSemanticsNodes().isEmpty()
+                }
+                // Both images stay composed, so preloading cannot account for extra requests.
+                composeRule.onNodeWithTag("reader-image-0").assertIsDisplayed()
+                composeRule.onNodeWithTag("reader-image-1").assertIsDisplayed()
+                composeRule.onNodeWithTag("reader-image-failed").assertIsDisplayed()
+                assertEquals(4, recoveredRequests.get())
+                assertEquals(4, failedRequests.get())
+                assertEquals(8, server.requestCount)
+                repeat(8) { checkNotNull(server.takeRequest(1, TimeUnit.SECONDS)) }
+
+                composeRule.runOnIdle { manualRetryRevision.intValue += 1 }
+
+                composeRule.waitUntil(10_000) {
+                    failedRequests.get() >= 5 && !failedImagesAvailable.value &&
+                        composeRule.onAllNodesWithTag("reader-image-1-loading")
+                            .fetchSemanticsNodes().isEmpty()
+                }
+                composeRule.onNodeWithTag("reader-image-failed").assertDoesNotExist()
+                composeRule.onNodeWithTag("reader-image-0-loading").assertDoesNotExist()
+                assertRequests(server, "/failed.png", count = 1)
+                assertNull(server.takeRequest(1, TimeUnit.SECONDS))
+                assertEquals(4, recoveredRequests.get())
+                assertEquals(5, failedRequests.get())
+            }
+        }
+    }
+
+    @Test
     fun chapterChangeRestartsFailedImageInPagedMode() {
         assertChapterChangeRestartsFailedImage(ImageReadMode.Paged)
     }
@@ -156,6 +231,12 @@ class ReaderImageRetryTest {
         server: MockWebServer,
         path: String,
         readMode: ImageReadMode = ImageReadMode.Paged,
+    ) = setReader(server, listOf(path), ImageReaderSettings(readMode = readMode))
+
+    private fun setReader(
+        server: MockWebServer,
+        paths: List<String>,
+        settings: ImageReaderSettings,
     ) {
         val session = Session(
             server = SavedServer("fixture-server", "Test", server.url("/").toString()),
@@ -166,15 +247,16 @@ class ReaderImageRetryTest {
             indexerId = 1,
             resourceId = "fixture-resource",
             title = "Retry fixture",
-            images = listOf(server.url(path).toString()),
-            imageCount = 1,
+            images = paths.map { server.url(it).toString() },
+            imageCount = paths.size,
         )
         composeRule.setContent {
             KaloscopeTheme {
+                if (!readerVisible.value) return@KaloscopeTheme
                 ImageReaderSurface(
                     session = session,
                     content = content,
-                    settings = ImageReaderSettings(readMode = readMode),
+                    settings = settings,
                     contentRevision = contentRevision.longValue,
                     imagesExhausted = true,
                     isLoadingMore = false,
@@ -188,6 +270,29 @@ class ReaderImageRetryTest {
                     manualRetryRevision = manualRetryRevision.intValue,
                     onFailedImagesChanged = { failedImagesAvailable.value = it },
                 )
+            }
+        }
+    }
+
+    @OptIn(coil3.annotation.DelicateCoilApi::class)
+    private fun withUncachedImageLoader(block: () -> Unit) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val previousLoader = SingletonImageLoader.get(context)
+        // An unintended reload must reach the server instead of succeeding from memory or disk.
+        val imageLoader = ImageLoader.Builder(context)
+            .memoryCache(null)
+            .diskCache(null)
+            .build()
+        SingletonImageLoader.setUnsafe(imageLoader)
+        try {
+            block()
+        } finally {
+            try {
+                composeRule.runOnIdle { readerVisible.value = false }
+                composeRule.waitForIdle()
+            } finally {
+                SingletonImageLoader.setUnsafe(previousLoader)
+                imageLoader.shutdown()
             }
         }
     }
@@ -217,8 +322,8 @@ class ReaderImageRetryTest {
         }
     }
 
-    private fun imageResponse(): MockResponse {
-        val bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+    private fun imageResponse(width: Int = 16): MockResponse {
+        val bitmap = Bitmap.createBitmap(width, 16, Bitmap.Config.ARGB_8888)
         val bytes = try {
             bitmap.eraseColor(Color.GREEN)
             ByteArrayOutputStream().use { output ->
