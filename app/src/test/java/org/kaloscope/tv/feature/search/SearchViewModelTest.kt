@@ -287,6 +287,112 @@ class SearchViewModelTest {
     }
 
     @Test
+    fun `stale result click preserves an indexer refresh`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page("v1")))
+        runCurrent()
+        val profiles = (viewModel.uiState.value as SearchUiState.Content).profiles
+        val refresh = CompletableDeferred<AppResult<List<IndexerSourceProfile>>>()
+        repository.pendingProfiles = refresh
+        viewModel.load(session(), force = true)
+        runCurrent()
+        assertEquals(SearchUiState.Loading, viewModel.uiState.value)
+
+        viewModel.openResult(session(), "v1")
+        runCurrent()
+        refresh.complete(AppResult.Success(profiles))
+        runCurrent()
+
+        assertTrue(resourceRepository.requests.isEmpty())
+        assertEquals(2, repository.requests.size)
+        repository.requests.last().result.complete(AppResult.Success(page("refreshed")))
+        runCurrent()
+        val content = viewModel.uiState.value as SearchUiState.Content
+        assertEquals(listOf("refreshed"), content.results.items.map { it.id })
+        assertNull(content.pendingDestination)
+    }
+
+    @Test
+    fun `stale result click preserves a new search`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page("v1")))
+        runCurrent()
+        viewModel.updateQuery("new query")
+        viewModel.search(session())
+        runCurrent()
+        val searchRequest = repository.requests.last()
+
+        viewModel.openResult(session(), "v1")
+        runCurrent()
+
+        assertFalse("A stale click must keep the new search active", searchRequest.cancelled)
+        assertTrue(resourceRepository.requests.isEmpty())
+        assertEquals(2, repository.requests.size)
+        searchRequest.result.complete(AppResult.Success(page("new")))
+        runCurrent()
+        val content = viewModel.uiState.value as SearchUiState.Content
+        assertEquals("new query", content.submittedKeyword)
+        assertEquals(listOf("new"), content.results.items.map { it.id })
+        assertNull(content.pendingDestination)
+    }
+
+    @Test
+    fun `stale result click preserves pagination for another indexer`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page("v1")))
+        runCurrent()
+        viewModel.selectIndexer(session(), 12)
+        runCurrent()
+        repository.requests.last().result.complete(AppResult.Success(page("other", hasNext = true)))
+        runCurrent()
+        viewModel.loadNext(session())
+        runCurrent()
+        val pendingPage = repository.requests.last()
+
+        viewModel.openResult(session(), "v1")
+        runCurrent()
+
+        assertFalse("A stale click must keep pagination active", pendingPage.cancelled)
+        assertTrue(resourceRepository.requests.isEmpty())
+        assertEquals(listOf(1, 1, 2), repository.requests.map { it.pageNumber })
+        pendingPage.result.complete(AppResult.Success(page("next", pageNumber = 2)))
+        runCurrent()
+        val content = viewModel.uiState.value as SearchUiState.Content
+        val results = content.results as SearchResultsState.Content
+        assertEquals(12L, content.selectedIndexerId)
+        assertEquals(listOf("other", "next"), results.items.map { it.id })
+        assertFalse(results.isLoadingMore)
+        assertNull(content.pendingDestination)
+    }
+
+    @Test
+    fun `valid result click cancels pagination and opens the resource`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(page("v1", hasNext = true)))
+        runCurrent()
+        viewModel.loadNext(session())
+        runCurrent()
+        val pendingPage = repository.requests.last()
+
+        viewModel.openResult(session(), "v1")
+        runCurrent()
+
+        assertTrue(pendingPage.cancelled)
+        assertEquals(1, resourceRepository.requests.size)
+        resourceRepository.requests.single().result.complete(AppResult.Success(textResource()))
+        runCurrent()
+        val content = viewModel.uiState.value as SearchUiState.Content
+        val results = content.results as SearchResultsState.Content
+        assertEquals(listOf("v1"), results.items.map { it.id })
+        assertFalse(results.isLoadingMore)
+        assertTrue(content.pendingDestination is SearchPendingDestination.Reader)
+    }
+
+    @Test
     fun `repeated result clicks preserve the pending resolution and destination`() = runTest(dispatcher) {
         viewModel.load(session())
         runCurrent()

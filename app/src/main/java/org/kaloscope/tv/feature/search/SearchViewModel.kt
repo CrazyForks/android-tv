@@ -103,8 +103,12 @@ class SearchViewModel @Inject constructor(
         resultId: String,
         settings: TvSettings = TvSettings(),
     ) {
-        // Ignore repeated clicks before startRequest can cancel the active resolution.
-        if ((uiState.value as? SearchUiState.Content)?.resolvingResultId != null) {
+        // Ignore repeated or stale clicks before they can cancel the current request.
+        val content = uiState.value as? SearchUiState.Content ?: return
+        if (
+            content.resolvingResultId != null ||
+            content.results.items.none { it.id == resultId }
+        ) {
             return
         }
         startRequest { coordinator.openResult(session, resultId, settings) }
