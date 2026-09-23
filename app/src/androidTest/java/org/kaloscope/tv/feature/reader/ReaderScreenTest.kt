@@ -2,6 +2,7 @@ package org.kaloscope.tv.feature.reader
 
 import android.graphics.Color as AndroidColor
 import android.view.KeyEvent as AndroidKeyEvent
+import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +18,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assert
@@ -41,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -65,6 +68,21 @@ import kotlin.math.roundToInt
 class ReaderScreenTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun textReadingKeepsScreenOnUntilExit() {
+        assertReaderKeepsScreenOnWhileActive(textState(text = "正文"))
+    }
+
+    @Test
+    fun scrollingImageReadingKeepsScreenOnUntilExit() {
+        assertReaderKeepsScreenOnWhileActive(imageState())
+    }
+
+    @Test
+    fun pagedImageReadingKeepsScreenOnUntilExit() {
+        assertReaderKeepsScreenOnWhileActive(imageState(readMode = ImageReadMode.Paged))
+    }
 
     @Test
     fun textStartBoundaryOpensControlsWithPreviousChapterFocused() {
@@ -1668,6 +1686,60 @@ class ReaderScreenTest {
             useUnmergedTree = true,
         ).assertExists()
         composeRule.onNodeWithText("正在加载后续图片…").assertDoesNotExist()
+    }
+
+    private fun assertReaderKeepsScreenOnWhileActive(activeState: ReaderUiState.Active) {
+        var state by mutableStateOf<ReaderUiState>(activeState)
+        var showReader by mutableStateOf(true)
+        lateinit var composeView: View
+        composeRule.setContent {
+            composeView = LocalView.current
+            if (showReader) {
+                KaloscopeTheme {
+                    ReaderScreen(
+                        session = session(),
+                        state = state,
+                        onBack = { showReader = false },
+                        onSelectChapter = {},
+                        onLoadMoreImages = {},
+                        onImageSettings = {},
+                        onTextSettings = {},
+                        onChapterOrder = {},
+                        onDismissChapterError = {},
+                        onDismissPageError = {},
+                    )
+                }
+            }
+        }
+
+        composeRule.runOnIdle {
+            assertTrue(composeView.keepScreenOn)
+            state = ReaderUiState.Idle
+        }
+        composeRule.runOnIdle {
+            assertFalse(composeView.keepScreenOn)
+            state = activeState
+        }
+        composeRule.runOnIdle {
+            assertTrue(composeView.keepScreenOn)
+            state = ReaderUiState.Error(
+                requestId = activeState.requestId,
+                error = AppError.InvalidData("reader_request"),
+            )
+        }
+        composeRule.runOnIdle {
+            assertFalse(composeView.keepScreenOn)
+            state = activeState
+        }
+        composeRule.runOnIdle { assertTrue(composeView.keepScreenOn) }
+
+        pressBack()
+
+        composeRule.onNodeWithTag("reader-screen").assertDoesNotExist()
+        composeRule.runOnIdle {
+            assertFalse(showReader)
+            assertFalse(composeView.keepScreenOn)
+        }
     }
 
     private fun assertReaderConfirmationKeys(state: ReaderUiState.Active, contentTag: String) {

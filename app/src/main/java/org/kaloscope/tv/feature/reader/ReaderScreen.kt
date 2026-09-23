@@ -36,6 +36,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -294,6 +295,7 @@ private fun ActiveReader(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .keepScreenOn()
             .background(background)
             .testTag("reader-screen"),
     ) {
