@@ -161,6 +161,13 @@ class PlaybackController internal constructor(
                 record(ProgressReason.Paused)
             }
         }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            // Buffering is already not playing, so a pause cannot emit onIsPlayingChanged.
+            if (!playWhenReady && player.playbackState == Player.STATE_BUFFERING) {
+                record(ProgressReason.Paused)
+            }
+        }
     }
 
     val player: ExoPlayer

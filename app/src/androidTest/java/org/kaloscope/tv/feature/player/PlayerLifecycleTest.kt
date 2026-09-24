@@ -243,7 +243,9 @@ class PlayerLifecycleTest {
 
     @Test
     fun pausedPlaybackRestoresLatestPositionAndStaysPaused() = withPlayer { owner ->
+        val pauseCount = progress.count { it.reason == ProgressReason.Paused }
         pressProgressKey(Key.Enter)
+        assertEquals(pauseCount + 1, progress.count { it.reason == ProgressReason.Paused })
         pressProgressKey(Key.DirectionRight)
         composeRule.waitUntil(10_000) {
             progress.any { it.reason == ProgressReason.Seeked && it.positionMillis >= 10_000 }
