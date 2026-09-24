@@ -184,4 +184,52 @@ class PlayerSeekCoordinatorTest {
         assertEquals(10_500L, coordinator.state.value.displayPositionMillis)
         assertFalse(coordinator.state.value.seekPending)
     }
+
+    @Test
+    fun `cancelling a queued seek prevents it from overriding replay`() = runTest {
+        val submittedTargets = mutableListOf<Long>()
+        val coordinator = PlayerSeekCoordinator(
+            scope = this,
+            onSeek = submittedTargets::add,
+        )
+        coordinator.reportPlayerPosition(60_000L)
+        coordinator.stepBy(durationMillis = 60_000L, offsetMillis = -10_000L)
+
+        coordinator.cancelPendingInteraction()
+        coordinator.reportPlayerPosition(0L)
+        advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+        runCurrent()
+
+        assertTrue(submittedTargets.isEmpty())
+        assertEquals(0L, coordinator.state.value.displayPositionMillis)
+        assertFalse(coordinator.state.value.seekPending)
+
+        coordinator.stepBy(durationMillis = 60_000L, offsetMillis = 10_000L)
+        advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+        runCurrent()
+        assertEquals(listOf(10_000L), submittedTargets)
+    }
+
+    @Test
+    fun `cancelling a submitted seek lets replay position replace the old target`() = runTest {
+        val submittedTargets = mutableListOf<Long>()
+        val coordinator = PlayerSeekCoordinator(
+            scope = this,
+            onSeek = submittedTargets::add,
+        )
+        coordinator.reportPlayerPosition(55_000L)
+        coordinator.stepBy(durationMillis = 60_000L, offsetMillis = 10_000L)
+        advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+        runCurrent()
+        assertEquals(listOf(60_000L), submittedTargets)
+        assertTrue(coordinator.state.value.seekPending)
+
+        coordinator.cancelPendingInteraction()
+        coordinator.reportPlayerPosition(0L)
+        coordinator.reportPlayerPosition(500L)
+
+        assertEquals(500L, coordinator.state.value.displayPositionMillis)
+        assertFalse(coordinator.state.value.seekPending)
+        assertEquals(listOf(60_000L), submittedTargets)
+    }
 }

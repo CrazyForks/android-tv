@@ -75,6 +75,56 @@ class PlayerLifecycleTest {
     }
 
     @Test
+    fun endedReplayCancelsQueuedSeek() =
+        withPlayer(resumePositionMillis = 59_000) { owner ->
+            pressProgressKey(Key.DirectionDown)
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodes(
+                    hasTestTag("player-play-pause") and
+                        hasContentDescription(context.getString(R.string.play)),
+                ).fetchSemanticsNodes().isNotEmpty()
+            }
+            val startCount = progress.count { it.reason == ProgressReason.Started }
+            composeRule.mainClock.autoAdvance = false
+            try {
+                // Keep the seek's settling delay pending until Center starts replay.
+                pressProgressKey(Key.DirectionLeft)
+                pressProgressKey(Key.DirectionCenter)
+                composeRule.mainClock.advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS + 500)
+                awaitStartAfter(startCount)
+
+                assertEquals(
+                    listOf(0L),
+                    progress.filter { it.reason == ProgressReason.Seeked }.map { it.positionMillis },
+                )
+                assertTrue(stop(owner) < 10_000)
+            } finally {
+                composeRule.mainClock.autoAdvance = true
+            }
+        }
+
+    @Test
+    fun pausingKeepsQueuedSeek() = withPlayer { owner ->
+        val seekCount = progress.count { it.reason == ProgressReason.Seeked }
+        composeRule.mainClock.autoAdvance = false
+        try {
+            pressProgressKey(Key.DirectionRight)
+            pressProgressKey(Key.DirectionCenter)
+            composeRule.mainClock.advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS + 500)
+            composeRule.waitUntil(10_000) {
+                progress.count { it.reason == ProgressReason.Seeked } > seekCount
+            }
+
+            val position = progress.last { it.reason == ProgressReason.Seeked }.positionMillis
+            assertTrue(position >= 10_000)
+            assertPositionNear(position, Progress(stop(owner), ProgressReason.Exit))
+        } finally {
+            composeRule.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test
     fun resumingAtEndExposesControlsAndAllowsReplay() =
         withPlayer(resumePositionMillis = 60_000, awaitInitialStart = false) { owner ->
             // Starting at the exact duration need not emit the initial Started progress event.

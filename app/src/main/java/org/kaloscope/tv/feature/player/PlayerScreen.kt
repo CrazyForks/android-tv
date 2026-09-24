@@ -272,6 +272,10 @@ private fun PlayerContent(
                 PlaybackFeedback.FallingBack,
             )
     val togglePlaybackWithFeedback = {
+        if (controller.player.playbackState == Player.STATE_ENDED) {
+            // Replay replaces any queued seek and its optimistic position from the ended stream.
+            seekCoordinator.cancelPendingInteraction()
+        }
         val playWhenReady = controller.togglePlayPause()
         playbackToggleFeedbackId += 1
         playbackToggleFeedback = PlayerPlaybackToggleEvent(
