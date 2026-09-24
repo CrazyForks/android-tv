@@ -133,6 +133,69 @@ class ReaderCoordinatorTest {
     }
 
     @Test
+    fun `chapter authorization errors cannot be dismissed before root handling`() = runTest {
+        for (request in listOf(imageRequest(), textRequest())) {
+            val loader = FakeReaderContentLoader(
+                chapterResult = AppResult.Failure(AppError.Unauthorized),
+            )
+            val coordinator = ReaderCoordinator(ReaderRequestStore().apply { put(request) }, loader)
+            coordinator.load(request.requestId, session())
+            coordinator.selectChapter(session(), 1)
+            val failed = coordinator.state.value
+
+            coordinator.dismissChapterError()
+
+            assertEquals(failed, coordinator.state.value)
+            assertTrue(coordinator.state.value.hasUnauthorized())
+        }
+    }
+
+    @Test
+    fun `chapter authorization errors block further chapter and page requests`() = runTest {
+        for (request in listOf(imageRequest(), textRequest())) {
+            val loader = FakeReaderContentLoader(
+                chapterResult = AppResult.Failure(AppError.Unauthorized),
+                pageResults = ArrayDeque(listOf(AppResult.Failure(AppError.Offline))),
+            )
+            val coordinator = ReaderCoordinator(ReaderRequestStore().apply { put(request) }, loader)
+            coordinator.load(request.requestId, session())
+            coordinator.selectChapter(session(), 1)
+            val failed = coordinator.state.value
+
+            coordinator.selectChapter(session(), 2)
+            coordinator.loadMoreImages(session())
+
+            assertEquals(failed, coordinator.state.value)
+            assertEquals(listOf(1), loader.chapterRequests)
+            assertTrue(loader.pageRequests.isEmpty())
+            assertTrue(coordinator.state.value.hasUnauthorized())
+        }
+    }
+
+    @Test
+    fun `ordinary chapter errors remain dismissible and retryable`() = runTest {
+        for (error in listOf(AppError.Forbidden, AppError.Offline, AppError.Timeout)) {
+            for (request in listOf(imageRequest(), textRequest())) {
+                val loader = FakeReaderContentLoader(chapterResult = AppResult.Failure(error))
+                val coordinator = ReaderCoordinator(ReaderRequestStore().apply { put(request) }, loader)
+                coordinator.load(request.requestId, session())
+                val original = coordinator.state.value
+                coordinator.selectChapter(session(), 1)
+                val failed = coordinator.state.value
+                assertEquals(error, (failed as ReaderUiState.Active).chapterError)
+                assertFalse(failed.hasUnauthorized())
+
+                coordinator.dismissChapterError()
+                assertEquals(original, coordinator.state.value)
+                coordinator.selectChapter(session(), 1)
+
+                assertEquals(failed, coordinator.state.value)
+                assertEquals(listOf(1, 1), loader.chapterRequests)
+            }
+        }
+    }
+
+    @Test
     fun `text chapter replacement retains reader settings and advances content revision`() = runTest {
         val content = ReaderTextContent.network(
             indexerId = 11,
@@ -292,6 +355,86 @@ class ReaderCoordinatorTest {
     }
 
     @Test
+    fun `page authorization errors cannot be dismissed before root handling`() = runTest {
+        val loader = FakeReaderContentLoader(
+            pageResults = ArrayDeque(listOf(AppResult.Failure(AppError.Unauthorized))),
+        )
+        val coordinator = ReaderCoordinator(
+            ReaderRequestStore().apply { put(imageRequest()) },
+            loader,
+        )
+        coordinator.load("reader-1", session())
+        coordinator.loadMoreImages(session())
+        val failed = coordinator.state.value
+
+        coordinator.dismissPageError()
+
+        assertEquals(failed, coordinator.state.value)
+        assertTrue(coordinator.state.value.hasUnauthorized())
+    }
+
+    @Test
+    fun `page authorization errors block further page and chapter requests`() = runTest {
+        val loader = FakeReaderContentLoader(
+            chapterResult = AppResult.Success(chapterContent(1)),
+            pageResults = ArrayDeque(
+                listOf(
+                    AppResult.Failure(AppError.Unauthorized),
+                    AppResult.Failure(AppError.Offline),
+                ),
+            ),
+        )
+        val coordinator = ReaderCoordinator(
+            ReaderRequestStore().apply { put(imageRequest()) },
+            loader,
+        )
+        coordinator.load("reader-1", session())
+        coordinator.loadMoreImages(session())
+        val failed = coordinator.state.value
+
+        coordinator.loadMoreImages(session())
+        coordinator.selectChapter(session(), 1)
+
+        assertEquals(failed, coordinator.state.value)
+        assertEquals(1, loader.pageRequests.size)
+        assertTrue(loader.chapterRequests.isEmpty())
+        assertTrue(coordinator.state.value.hasUnauthorized())
+    }
+
+    @Test
+    fun `ordinary page errors remain dismissible and retryable`() = runTest {
+        for (error in listOf(AppError.Forbidden, AppError.Offline, AppError.Timeout)) {
+            val loader = FakeReaderContentLoader(
+                pageResults = ArrayDeque(
+                    listOf(
+                        AppResult.Failure(error),
+                        AppResult.Success(ReaderImagePage(listOf("two.jpg"), 3, false)),
+                    ),
+                ),
+            )
+            val coordinator = ReaderCoordinator(
+                ReaderRequestStore().apply { put(imageRequest()) },
+                loader,
+            )
+            coordinator.load("reader-1", session())
+            val original = coordinator.state.value as ReaderUiState.Image
+            coordinator.loadMoreImages(session())
+            assertEquals(original.copy(pageError = error), coordinator.state.value)
+            assertFalse(coordinator.state.value.hasUnauthorized())
+
+            coordinator.dismissPageError()
+            assertEquals(original, coordinator.state.value)
+            coordinator.loadMoreImages(session())
+
+            assertEquals(
+                original.copy(content = original.content.copy(images = listOf("one.jpg", "two.jpg"))),
+                coordinator.state.value,
+            )
+            assertEquals(2, loader.pageRequests.size)
+        }
+    }
+
+    @Test
     fun `pagination waits for chapter replacement before loading its pages`() = runTest {
         val pendingChapter = CompletableDeferred<AppResult<ReaderContent>>()
         val pendingPage = CompletableDeferred<AppResult<ReaderImagePage>>()
@@ -444,13 +587,17 @@ private class FakeReaderContentLoader(
     private val pageResults: ArrayDeque<AppResult<ReaderImagePage>> = ArrayDeque(),
     private val pendingPageResult: CompletableDeferred<AppResult<ReaderImagePage>>? = null,
 ) : ReaderContentLoader {
+    val chapterRequests = mutableListOf<Int>()
     val pageRequests = mutableListOf<ReaderImageContent>()
 
     override suspend fun resolveChapter(
         session: Session,
         content: ReaderContent,
         chapterIndex: Int,
-    ): AppResult<ReaderContent> = chapterResults[chapterIndex]?.await() ?: chapterResult
+    ): AppResult<ReaderContent> {
+        chapterRequests += chapterIndex
+        return chapterResults[chapterIndex]?.await() ?: chapterResult
+    }
 
     override suspend fun loadImagePage(
         session: Session,
@@ -510,6 +657,21 @@ private fun chapterContent(index: Int) = ReaderImageContent.network(
     imageCount = 1,
     chapters = imageRequest().content.chapters,
     selectedChapterIndex = index,
+)
+
+private fun textRequest() = ReaderRequest.Text(
+    requestId = "text-reader",
+    serverId = "server-id",
+    content = ReaderTextContent.network(
+        indexerId = 11,
+        resourceId = "book-1",
+        title = "Book",
+        text = "First chapter",
+        chapters = imageRequest().content.chapters,
+        selectedChapterIndex = 0,
+    ),
+    settings = TextReaderSettings(),
+    chapterOrder = ReaderChapterOrder.Ascending,
 )
 
 private fun session() = Session(

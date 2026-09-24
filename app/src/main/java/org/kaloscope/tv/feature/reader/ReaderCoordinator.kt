@@ -102,6 +102,7 @@ class ReaderCoordinator(
         chapterIndex: Int,
     ) {
         val current = mutableState.value as? ReaderUiState.Active ?: return
+        if (current.hasUnauthorizedError()) return
         val currentContent = current.content
         if (
             chapterIndex !in currentContent.chapters.indices ||
@@ -135,6 +136,7 @@ class ReaderCoordinator(
 
     suspend fun loadMoreImages(session: Session) {
         val current = mutableState.value as? ReaderUiState.Image ?: return
+        if (current.hasUnauthorizedError()) return
         // Displayed content still belongs to the old chapter while its replacement loads.
         if (current.isChapterLoading || current.isLoadingMore || current.imagesExhausted) return
         val requestGeneration = generation.get()
@@ -191,11 +193,15 @@ class ReaderCoordinator(
     }
 
     fun dismissChapterError() {
-        updateActive { finishChapterLoading() }
+        updateActive {
+            if (chapterError == AppError.Unauthorized) this else finishChapterLoading()
+        }
     }
 
     fun dismissPageError() {
-        updateImage { copy(pageError = null) }
+        updateImage {
+            if (pageError == AppError.Unauthorized) this else copy(pageError = null)
+        }
     }
 
     fun close(requestId: String) {
@@ -231,6 +237,11 @@ class ReaderCoordinator(
                 chapterOrder = chapterOrder,
             )
         }
+
+    // Keep authentication failures visible until root session handling clears the reader.
+    private fun ReaderUiState.Active.hasUnauthorizedError(): Boolean =
+        chapterError == AppError.Unauthorized ||
+            (this is ReaderUiState.Image && pageError == AppError.Unauthorized)
 
     private fun replaceChapterContent(content: ReaderContent) {
         val current = mutableState.value as? ReaderUiState.Active ?: return
