@@ -468,7 +468,8 @@ private fun PlayerContent(
             .focusable(
                 enabled =
                     controlLayer != PlayerControlLayer.Controls &&
-                        !sidePanelOpen,
+                        !sidePanelOpen &&
+                        feedback != PlaybackFeedback.Failed,
             )
             .onPreviewKeyEvent { event ->
                 // Back belongs to the exit/drawer handlers and must not cancel its own confirmation.
@@ -481,7 +482,9 @@ private fun PlayerContent(
                     // The page receives preview events before the loading overlay can consume them.
                     return@onPreviewKeyEvent true
                 }
+                // Error actions own remote input even when the normal controls were hidden.
                 if (
+                    feedback == PlaybackFeedback.Failed ||
                     controlLayer == PlayerControlLayer.Controls ||
                     sidePanelOpen
                 ) {

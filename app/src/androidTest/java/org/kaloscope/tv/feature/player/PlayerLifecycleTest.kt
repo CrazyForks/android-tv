@@ -1,6 +1,7 @@
 package org.kaloscope.tv.feature.player
 
 import android.net.Uri
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
@@ -9,12 +10,17 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
@@ -67,6 +73,72 @@ class PlayerLifecycleTest {
     fun endedPlaybackRestartsWithCenterOnPlayButton() {
         assertEndedPlaybackRestarts("player-play-pause")
     }
+
+    @Test
+    fun failureWithHiddenControlsKeepsRetryFocusAndAcceptsCenter() {
+        assertFailureAllowsRemoteRetry(showPreview = false, confirmKey = Key.DirectionCenter)
+    }
+
+    @Test
+    fun failureWithPreviewKeepsRetryFocusAndAcceptsEnter() {
+        assertFailureAllowsRemoteRetry(showPreview = true, confirmKey = Key.Enter)
+    }
+
+    private fun assertFailureAllowsRemoteRetry(showPreview: Boolean, confirmKey: Key) =
+        withPlayer { _ ->
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val context = instrumentation.targetContext
+            pressProgressKey(Key.Enter)
+            instrumentation.sendKeyDownUpSync(AndroidKeyEvent.KEYCODE_BACK)
+            composeRule.onNodeWithTag("player-progress").assertDoesNotExist()
+            if (showPreview) {
+                composeRule.onRoot().performKeyInput { pressKey(Key.DirectionUp) }
+                composeRule.onNodeWithTag("player-info-preview").assertIsDisplayed()
+            }
+
+            val audio = File(checkNotNull(Uri.parse(request.value.source.url).path))
+            val audioBytes = audio.readBytes()
+            val subtitle = File.createTempFile("player-retry-", ".vtt", context.cacheDir)
+            try {
+                subtitle.writeText("WEBVTT\n\n00:00:00.000 --> 00:01:00.000\nRetry fixture\n")
+                // Reload the same source after removing the fixture so failure occurs after
+                // hiding controls, without replacing the playback session or its control layer.
+                assertTrue(audio.delete())
+                composeRule.runOnIdle {
+                    subtitles.value = listOf(
+                        SubtitleTrack(
+                            id = "retry-fixture",
+                            label = "English",
+                            url = Uri.fromFile(subtitle).toString(),
+                            language = "en",
+                        ),
+                    )
+                }
+                composeRule.waitUntil(10_000) { progress.any { it.reason == ProgressReason.Error } }
+                val retry = composeRule.onNodeWithText(context.getString(R.string.retry))
+                retry.assertIsDisplayed().assertIsFocused()
+
+                instrumentation.sendKeyDownUpSync(AndroidKeyEvent.KEYCODE_BACK)
+                composeRule.onNodeWithTag("player-exit-confirmation").assertIsDisplayed()
+                for (key in listOf(Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)) {
+                    retry.performKeyInput { pressKey(key) }.assertIsFocused()
+                }
+                composeRule.onNodeWithTag("player-exit-confirmation").assertDoesNotExist()
+
+                audio.writeBytes(audioBytes)
+                val startsBefore = progress.count { it.reason == ProgressReason.Started }
+                retry.performKeyInput { pressKey(confirmKey) }
+                awaitStartAfter(startsBefore)
+
+                retry.assertDoesNotExist()
+                // Retry can briefly lose duration and focus Play/Pause until it is known again.
+                composeRule.onAllNodes(
+                    (hasTestTag("player-progress") or hasTestTag("player-play-pause")) and isFocused(),
+                ).assertCountEquals(1)
+            } finally {
+                subtitle.delete()
+            }
+        }
 
     private fun assertEndedPlaybackRestarts(controlTag: String) =
         withPlayer(resumePositionMillis = 59_000) { owner ->
