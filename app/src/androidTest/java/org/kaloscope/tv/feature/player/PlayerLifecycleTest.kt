@@ -75,6 +75,32 @@ class PlayerLifecycleTest {
     }
 
     @Test
+    fun resumingAtEndExposesControlsAndAllowsReplay() =
+        withPlayer(resumePositionMillis = 60_000, awaitInitialStart = false) { owner ->
+            // Starting at the exact duration need not emit the initial Started progress event.
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodesWithTag("player-progress").fetchSemanticsNodes().isNotEmpty()
+            }
+            pressProgressKey(Key.DirectionDown)
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodes(
+                    hasTestTag("player-play-pause") and
+                        hasContentDescription(context.getString(R.string.play)),
+                ).fetchSemanticsNodes().isNotEmpty()
+            }
+            val startCount = progress.count { it.reason == ProgressReason.Started }
+
+            composeRule.onNodeWithTag("player-play-pause")
+                .assertIsFocused()
+                .performKeyInput { pressKey(Key.DirectionCenter) }
+            awaitStartAfter(startCount)
+
+            assertPositionNear(0, progress.last { it.reason == ProgressReason.Started })
+            assertTrue(stop(owner) < 10_000)
+        }
+
+    @Test
     fun failureWithHiddenControlsKeepsRetryFocusAndAcceptsCenter() {
         assertFailureAllowsRemoteRetry(showPreview = false, confirmKey = Key.DirectionCenter)
     }
@@ -398,6 +424,7 @@ class PlayerLifecycleTest {
 
     private fun withPlayer(
         resumePositionMillis: Long = 5_000,
+        awaitInitialStart: Boolean = true,
         block: (PlayerLifecycleOwner) -> Unit,
     ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -476,7 +503,7 @@ class PlayerLifecycleTest {
                     }
                 }
             }
-            awaitStartAfter(0)
+            if (awaitInitialStart) awaitStartAfter(0)
             block(owner)
         } finally {
             composeRule.runOnIdle { visible.value = false }

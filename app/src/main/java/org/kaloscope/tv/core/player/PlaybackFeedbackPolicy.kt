@@ -24,7 +24,10 @@ object PlaybackFeedbackPolicy {
             failure != null -> PlaybackFeedback.Failed
             switchingItem -> PlaybackFeedback.SwitchingItem
             fallbackInProgress -> PlaybackFeedback.FallingBack
-            !hasBeenReady && playbackState != Player.STATE_READY ->
+            // Resuming at the end can reach STATE_ENDED without ever reaching STATE_READY.
+            !hasBeenReady &&
+                playbackState != Player.STATE_READY &&
+                playbackState != Player.STATE_ENDED ->
                 PlaybackFeedback.Preparing
 
             PlaybackBufferingPolicy.isRebuffering(
