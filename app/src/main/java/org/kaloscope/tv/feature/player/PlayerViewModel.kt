@@ -245,8 +245,11 @@ class PlayerViewModel @Inject constructor(
 
     private fun requestForSelection(): PlaybackRequest? {
         val content = uiState.value as? PlayerUiState.Content ?: return null
-        // Keep chapter authentication failures visible until root session handling clears the player.
-        if (content.switchError == AppError.Unauthorized) return null
+        // Keep authentication failures visible until root session handling clears the player.
+        if (
+            content.switchError == AppError.Unauthorized ||
+            content.extraFailures.values.any { it == AppError.Unauthorized }
+        ) return null
         return content.request
     }
 

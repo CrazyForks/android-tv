@@ -550,6 +550,122 @@ class PlayerViewModelSettingsTest {
 
     @Test
     @OptIn(ExperimentalCoroutinesApi::class)
+    fun `local episode selection preserves supplementary authorization failures`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            for (extra in PlayerExtra.entries) {
+                val store = PlaybackRequestStore()
+                val repository = PlaybackExtrasRepository()
+                val successfulProbe = repository.probeResult
+                when (extra) {
+                    PlayerExtra.Subtitles ->
+                        repository.subtitleResult = AppResult.Failure(AppError.Unauthorized)
+                    PlayerExtra.Danmakus ->
+                        repository.danmakuResult = AppResult.Failure(AppError.Unauthorized)
+                    PlayerExtra.MediaProbe ->
+                        repository.probeResult = AppResult.Failure(AppError.Unauthorized)
+                }
+                val viewModel = PlayerViewModel(
+                    requestStore = store,
+                    mediaRepository = repository,
+                    historyRepository = unusedHistoryRepository(),
+                    networkResourceRepository = unusedNetworkResourceRepository(),
+                )
+                try {
+                    val episodes = listOf(
+                        mediaSummary(301, "/episode-1.mkv", "Episode 1"),
+                        mediaSummary(302, "/episode-2.mkv", "Episode 2"),
+                    )
+                    val requestId = checkNotNull(
+                        viewModel.createFromDetail(session(), mediaDetail(episodes.first()), episodes, 42),
+                    )
+                    viewModel.load(session(), requestId)
+                    runCurrent()
+                    val failed = viewModel.uiState.value as PlayerUiState.Content
+                    assertEquals(mapOf(extra to AppError.Unauthorized), failed.extraFailures)
+                    assertTrue(failed.hasUnauthorized())
+                    repository.subtitleResult = AppResult.Success(emptyList())
+                    repository.danmakuResult = AppResult.Success(emptyList())
+                    repository.probeResult = successfulProbe
+
+                    viewModel.switchAdjacent(session(), offset = 1)
+                    runCurrent()
+                    assertEquals("extra=$extra", failed, viewModel.uiState.value)
+
+                    viewModel.selectEpisode(session(), episodeIndex = 1)
+                    runCurrent()
+                    assertEquals("extra=$extra", failed, viewModel.uiState.value)
+                    assertEquals(failed.request, store.get(requestId))
+                    assertEquals(listOf("/episode-1.mkv"), repository.probePaths)
+
+                    viewModel.clearServer(session().server.id)
+                    store.put(failed.request)
+                    viewModel.load(session(), requestId)
+                    runCurrent()
+                    viewModel.switchAdjacent(session(), offset = 1)
+                    runCurrent()
+
+                    val selected = viewModel.uiState.value as PlayerUiState.Content
+                    assertEquals(302L, (selected.request as PlaybackRequest.LocalMedia).mediaId)
+                    assertFalse(selected.hasUnauthorized())
+                    assertEquals(selected.request, store.get(requestId))
+                } finally {
+                    viewModel.viewModelScope.cancel()
+                    runCurrent()
+                }
+            }
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `ordinary supplementary failures still allow local episode selection`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val store = PlaybackRequestStore()
+        val repository = PlaybackExtrasRepository(
+            subtitleResult = AppResult.Failure(AppError.Forbidden),
+            danmakuResult = AppResult.Failure(AppError.Timeout),
+            probeResult = AppResult.Failure(AppError.Offline),
+        )
+        val viewModel = PlayerViewModel(
+            requestStore = store,
+            mediaRepository = repository,
+            historyRepository = unusedHistoryRepository(),
+            networkResourceRepository = unusedNetworkResourceRepository(),
+        )
+        try {
+            val episodes = listOf(
+                mediaSummary(301, "/episode-1.mkv", "Episode 1"),
+                mediaSummary(302, "/episode-2.mkv", "Episode 2"),
+            )
+            val requestId = checkNotNull(
+                viewModel.createFromDetail(session(), mediaDetail(episodes.first()), episodes, 42),
+            )
+            viewModel.load(session(), requestId)
+            runCurrent()
+            val failed = viewModel.uiState.value as PlayerUiState.Content
+            assertEquals(PlayerExtra.entries.toSet(), failed.extraErrors)
+            assertFalse(failed.hasUnauthorized())
+
+            viewModel.selectEpisode(session(), episodeIndex = 1)
+            runCurrent()
+
+            val selected = viewModel.uiState.value as PlayerUiState.Content
+            assertEquals(302L, (selected.request as PlaybackRequest.LocalMedia).mediaId)
+            assertEquals(failed.extraFailures, selected.extraFailures)
+            assertEquals(selected.request, store.get(requestId))
+            assertEquals(listOf("/episode-1.mkv", "/episode-2.mkv"), repository.probePaths)
+        } finally {
+            viewModel.viewModelScope.cancel()
+            runCurrent()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun `clearing server removes progress authorization errors`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {
@@ -1248,6 +1364,7 @@ private class SequencedHistoryRepository : HistoryRepository {
 private class PlaybackExtrasRepository(
     var subtitleResult: AppResult<List<SubtitleTrack>> = AppResult.Success(emptyList()),
     var danmakuResult: AppResult<List<DanmakuComment>> = AppResult.Success(emptyList()),
+    var probeResult: AppResult<MediaProbe> = AppResult.Success(MediaProbe(90_000, emptyList())),
 ) : StubMediaRepository() {
     val probePaths = mutableListOf<String>()
 
@@ -1256,12 +1373,7 @@ private class PlaybackExtrasRepository(
         path: String,
     ): AppResult<MediaProbe> {
         probePaths += path
-        return AppResult.Success(
-            MediaProbe(
-                durationMillis = 90_000,
-                chapters = emptyList(),
-            ),
-        )
+        return probeResult
     }
 
     override suspend fun getSubtitleTracks(
