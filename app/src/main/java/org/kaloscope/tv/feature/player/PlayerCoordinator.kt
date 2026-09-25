@@ -157,6 +157,8 @@ class PlayerCoordinator(
         extra: PlayerExtra,
     ) {
         val original = mutableState.value as? PlayerUiState.Content ?: return
+        // Auth failures must remain visible until the root clears the session.
+        if (original.extraFailures[extra] == AppError.Unauthorized) return
         val request = original.request as? PlaybackRequest.LocalMedia ?: return
         when (extra) {
             PlayerExtra.Subtitles -> applyExtraResult(

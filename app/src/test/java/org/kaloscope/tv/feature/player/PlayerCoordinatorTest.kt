@@ -427,6 +427,70 @@ class PlayerCoordinatorTest {
     }
 
     @Test
+    fun `extra authorization failures block retries until a new load`() = runTest {
+        for (extra in listOf(PlayerExtra.Subtitles, PlayerExtra.Danmakus)) {
+            val request = request()
+            val store = PlaybackRequestStore().apply { put(request) }
+            val repository = FakeMediaRepository(
+                subtitles = if (extra == PlayerExtra.Subtitles) {
+                    AppResult.Failure(AppError.Unauthorized)
+                } else {
+                    AppResult.Success(listOf(subtitle()))
+                },
+                danmakus = if (extra == PlayerExtra.Danmakus) {
+                    AppResult.Failure(AppError.Unauthorized)
+                } else {
+                    AppResult.Success(listOf(danmaku()))
+                },
+            )
+            val coordinator = PlayerCoordinator(store, repository)
+            coordinator.load(session(), request.requestId)
+            val failed = coordinator.state.value
+            repository.subtitles = AppResult.Success(listOf(subtitle()))
+            repository.danmakus = AppResult.Success(listOf(danmaku()))
+
+            coordinator.retryExtra(session(), extra)
+
+            assertEquals(failed, coordinator.state.value)
+            assertTrue(coordinator.state.value.hasUnauthorized())
+            assertEquals(1, repository.subtitleCalls)
+            assertEquals(1, repository.danmakuCalls)
+
+            coordinator.reset()
+            coordinator.load(session(), request.requestId)
+
+            val recovered = coordinator.state.value as PlayerUiState.Content
+            assertTrue(recovered.extraErrors.isEmpty())
+            assertEquals(2, repository.subtitleCalls)
+            assertEquals(2, repository.danmakuCalls)
+        }
+    }
+
+    @Test
+    fun `forbidden supplementary requests remain retryable`() = runTest {
+        val request = request()
+        val store = PlaybackRequestStore().apply { put(request) }
+        val repository = FakeMediaRepository(
+            subtitles = AppResult.Failure(AppError.Forbidden),
+            danmakus = AppResult.Failure(AppError.Forbidden),
+        )
+        val coordinator = PlayerCoordinator(store, repository)
+        coordinator.load(session(), request.requestId)
+        repository.subtitles = AppResult.Success(listOf(subtitle()))
+        repository.danmakus = AppResult.Success(listOf(danmaku()))
+
+        coordinator.retryExtra(session(), PlayerExtra.Subtitles)
+        coordinator.retryExtra(session(), PlayerExtra.Danmakus)
+
+        val content = coordinator.state.value as PlayerUiState.Content
+        assertTrue(content.extraErrors.isEmpty())
+        assertEquals(listOf(subtitle()), content.subtitles)
+        assertEquals(listOf(danmaku()), content.danmakus)
+        assertEquals(2, repository.subtitleCalls)
+        assertEquals(2, repository.danmakuCalls)
+    }
+
+    @Test
     fun `concurrent extra retries retain each result and newer progress errors`() = runTest {
         val request = request()
         val store = PlaybackRequestStore().apply { put(request) }
