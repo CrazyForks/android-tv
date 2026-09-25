@@ -2,6 +2,8 @@ package org.kaloscope.tv.data.search
 
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -26,6 +28,7 @@ import org.kaloscope.tv.core.model.Session
 import org.kaloscope.tv.core.model.SessionUser
 import org.kaloscope.tv.core.network.ApiClientFactory
 import org.kaloscope.tv.core.player.NetworkVideoCodecSupport
+import org.kaloscope.tv.core.player.PlaybackSourceResolver
 import org.kaloscope.tv.core.player.TranscodeResolution
 
 class DefaultNetworkResourceRepositoryTest {
@@ -249,6 +252,104 @@ class DefaultNetworkResourceRepositoryTest {
         server.takeRequest()
         val chapterRequest = server.takeRequest()
         assertTrue(chapterRequest.body.readUtf8().contains(""""chapter_id":"episode-1""""))
+    }
+
+    @Test
+    fun `first chapter inherits details DASH type for inline manifest playback`() = runTest {
+        for (catalogType in listOf(NetworkVideoType.Unknown, NetworkVideoType.Hls)) {
+            server.enqueue(
+                response(
+                    """
+                    {"status":200,"message":"","data":{
+                      "id":"series-1","title":"Series","media_type":"video",
+                      "video_type":"dash","chapters":[{"id":"episode-1","title":"Episode 1"}]
+                    }}
+                    """.trimIndent(),
+                ),
+            )
+            server.enqueue(
+                response(
+                    """
+                    {"status":200,"message":"","data":{
+                      "id":"series-1","title":"Episode 1","media_type":"video",
+                      "url":"<MPD><Period><BaseURL>/_api/media/proxy/</BaseURL></Period></MPD>"
+                    }}
+                    """.trimIndent(),
+                ),
+            )
+            val playbackSession = session()
+
+            val resolved = repository.resolveResource(
+                session = playbackSession,
+                indexerId = 11,
+                result = result("series-1", NetworkMediaType.Video, catalogType),
+                preferredDefinition = TranscodeResolution.P1080,
+            )
+
+            val source = ((resolved as AppResult.Success).value as ResolvedNetworkResource.Video).source
+            assertEquals(NetworkVideoType.Dash, source.videoType)
+            assertEquals(0, source.selectedChapterIndex)
+            assertEquals("episode-1", source.chapters.single().id)
+            val playbackSource = PlaybackSourceResolver.networkMediaSource(
+                session = playbackSession,
+                rawUrl = source.url,
+                videoType = source.videoType,
+            )
+            assertEquals("application/dash+xml", playbackSource.mimeType)
+            assertTrue(playbackSource.url.startsWith("data:application/dash+xml;base64,"))
+            server.takeRequest()
+            val chapterRequest = server.takeRequest()
+            assertTrue(chapterRequest.body.readUtf8().contains(""""chapter_id":"episode-1""""))
+        }
+    }
+
+    @Test
+    fun `first chapter video type preserves missing and explicit override semantics`() = runTest {
+        val cases = listOf(
+            Triple("hls", null, NetworkVideoType.Hls),
+            Triple("hls", "  ", NetworkVideoType.Hls),
+            Triple("custom", null, NetworkVideoType.Unknown),
+            Triple(null, null, NetworkVideoType.Dash),
+            Triple("  ", null, NetworkVideoType.Dash),
+            Triple("dash", "mp4", NetworkVideoType.Mp4),
+            Triple("dash", "custom", NetworkVideoType.Unknown),
+        )
+        for ((detailsType, chapterType, expectedType) in cases) {
+            server.enqueue(
+                response(
+                    """
+                    {"status":200,"message":"","data":{
+                      "id":"series-1","title":"Series","media_type":"video",
+                      "video_type":${detailsType?.let(::JsonPrimitive) ?: JsonNull},
+                      "chapters":[{"id":"episode-1","title":"Episode 1"}]
+                    }}
+                    """.trimIndent(),
+                ),
+            )
+            server.enqueue(
+                response(
+                    """
+                    {"status":200,"message":"","data":{
+                      "id":"series-1","title":"Episode 1","media_type":"video",
+                      "video_type":${chapterType?.let(::JsonPrimitive) ?: JsonNull},
+                      "url":"https://cdn.example/stream"
+                    }}
+                    """.trimIndent(),
+                ),
+            )
+            val requestsBefore = server.requestCount
+
+            val resolved = repository.resolveResource(
+                session = session(),
+                indexerId = 11,
+                result = result("series-1", NetworkMediaType.Video, NetworkVideoType.Dash),
+                preferredDefinition = TranscodeResolution.P1080,
+            )
+
+            val source = ((resolved as AppResult.Success).value as ResolvedNetworkResource.Video).source
+            assertEquals("details=$detailsType chapter=$chapterType", expectedType, source.videoType)
+            assertEquals(requestsBefore + 2, server.requestCount)
+        }
     }
 
     @Test

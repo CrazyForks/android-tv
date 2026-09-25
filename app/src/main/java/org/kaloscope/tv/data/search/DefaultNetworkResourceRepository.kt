@@ -220,7 +220,7 @@ class DefaultNetworkResourceRepository @Inject constructor(
                 fallbackTitle = chapter.title,
                 preferredDefinition = preferredDefinition,
                 preferHevcForDash = videoCodecSupport.shouldPreferHevcForDash(),
-                fallbackVideoType = fallbackVideoType,
+                fallbackVideoType = resource.videoType.resolveVideoType(fallbackVideoType),
             ) ?: throw SerializationException("Missing playable network chapter")
             resolved.copy(
                 chapters = chapters,

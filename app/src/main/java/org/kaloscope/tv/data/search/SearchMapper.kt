@@ -228,8 +228,8 @@ internal fun String?.toNetworkVideoType(): NetworkVideoType =
         else -> NetworkVideoType.Unknown
     }
 
-private fun String?.resolveVideoType(fallback: NetworkVideoType): NetworkVideoType {
-    // Missing details inherit the catalog hint; explicit unknown values must not.
+internal fun String?.resolveVideoType(fallback: NetworkVideoType): NetworkVideoType {
+    // Missing types inherit the fallback; explicit unknown values must not.
     return if (trimmedOrNull() == null) fallback else toNetworkVideoType()
 }
 
