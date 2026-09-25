@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -40,19 +41,22 @@ class ReaderViewModelTest {
         chapterOrder = ReaderChapterOrder.Ascending,
     )
     private lateinit var loader: PendingReaderContentLoader
+    private lateinit var requestStore: ReaderRequestStore
     private lateinit var viewModel: ReaderViewModel
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         loader = PendingReaderContentLoader()
-        viewModel = ReaderViewModel(ReaderRequestStore().apply { put(request) }, loader)
+        requestStore = ReaderRequestStore().apply { put(request) }
+        viewModel = ReaderViewModel(requestStore, loader)
         viewModel.load(request.requestId, session())
     }
 
     @After
     fun tearDown() {
-        viewModel.close(request.requestId)
+        val currentRequestId = (viewModel.uiState.value as? ReaderUiState.Active)?.requestId
+        viewModel.close(currentRequestId ?: request.requestId)
         dispatcher.scheduler.runCurrent()
         Dispatchers.resetMain()
     }
@@ -138,6 +142,64 @@ class ReaderViewModelTest {
         loader.chapterResult.complete(AppResult.Success(imageContent(1)))
         runCurrent()
         assertEquals(ReaderUiState.Idle, viewModel.uiState.value)
+    }
+
+    @Test
+    fun `late close of previous reader preserves new chapter loading`() = runTest(dispatcher) {
+        val nextRequest = request.copy(requestId = "reader-2")
+        requestStore.put(nextRequest)
+        viewModel.load(nextRequest.requestId, session())
+        viewModel.selectChapter(session(), 1)
+        runCurrent()
+
+        viewModel.close(request.requestId)
+        runCurrent()
+
+        assertFalse(loader.chapterCancelled)
+        assertNull(requestStore.get(request.requestId))
+        assertEquals(nextRequest, requestStore.get(nextRequest.requestId))
+        val loading = viewModel.uiState.value as ReaderUiState.Image
+        assertEquals(nextRequest.requestId, loading.requestId)
+        assertTrue(loading.isChapterLoading)
+
+        val replacement = imageContent(1)
+        loader.chapterResult.complete(AppResult.Success(replacement))
+        runCurrent()
+        val loaded = viewModel.uiState.value as ReaderUiState.Image
+        assertEquals(replacement, loaded.content)
+        assertEquals(1L, loaded.contentRevision)
+        assertFalse(loaded.isChapterLoading)
+
+        // The stale close must also retain the loaded ID so recomposition cannot reset content.
+        viewModel.load(nextRequest.requestId, session())
+        assertEquals(loaded, viewModel.uiState.value)
+    }
+
+    @Test
+    fun `late close of previous reader preserves new pagination`() = runTest(dispatcher) {
+        val nextRequest = request.copy(requestId = "reader-2")
+        requestStore.put(nextRequest)
+        viewModel.load(nextRequest.requestId, session())
+        viewModel.loadMoreImages(session())
+        runCurrent()
+
+        viewModel.close(request.requestId)
+        runCurrent()
+
+        assertFalse(loader.pageCancelled)
+        assertNull(requestStore.get(request.requestId))
+        assertEquals(nextRequest, requestStore.get(nextRequest.requestId))
+        val loading = viewModel.uiState.value as ReaderUiState.Image
+        assertEquals(nextRequest.requestId, loading.requestId)
+        assertTrue(loading.isLoadingMore)
+
+        loader.pageResult.complete(AppResult.Success(nextPage()))
+        runCurrent()
+        val loaded = viewModel.uiState.value as ReaderUiState.Image
+        assertEquals(nextRequest.content.images + "next-page.jpg", loaded.content.images)
+        assertFalse(loaded.isLoadingMore)
+        viewModel.load(nextRequest.requestId, session())
+        assertEquals(loaded, viewModel.uiState.value)
     }
 }
 

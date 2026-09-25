@@ -576,6 +576,34 @@ class ReaderCoordinatorTest {
         assertEquals(ReaderUiState.Idle, coordinator.state.value)
     }
 
+    @Test
+    fun `closing an old request preserves the current reader error`() {
+        val store = ReaderRequestStore().apply { put(imageRequest()) }
+        val coordinator = ReaderCoordinator(store, FakeReaderContentLoader())
+        coordinator.load("missing", session())
+        val error = coordinator.state.value
+
+        coordinator.close("reader-1")
+
+        assertNull(store.get("reader-1"))
+        assertEquals(error, coordinator.state.value)
+    }
+
+    @Test
+    fun `closing the current missing or wrong server request clears its error`() {
+        for (requestId in listOf("missing", "reader-1")) {
+            val store = ReaderRequestStore().apply { put(imageRequest(serverId = "other-server")) }
+            val coordinator = ReaderCoordinator(store, FakeReaderContentLoader())
+            coordinator.load(requestId, session())
+            assertTrue(coordinator.state.value is ReaderUiState.Error)
+
+            coordinator.close(requestId)
+
+            assertNull(store.get(requestId))
+            assertEquals(ReaderUiState.Idle, coordinator.state.value)
+        }
+    }
+
     private fun errorState(coordinator: ReaderCoordinator) =
         coordinator.state.value as ReaderUiState.Error
 }

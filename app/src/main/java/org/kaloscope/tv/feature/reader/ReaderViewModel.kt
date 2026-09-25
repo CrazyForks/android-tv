@@ -74,8 +74,10 @@ class ReaderViewModel @Inject constructor(
     fun dismissPageError() = coordinator.dismissPageError()
 
     fun close(requestId: String) {
-        cancelContentJobs()
-        loadedRequestId = null
+        if (loadedRequestId == requestId) {
+            cancelContentJobs()
+            loadedRequestId = null
+        }
         coordinator.close(requestId)
     }
 

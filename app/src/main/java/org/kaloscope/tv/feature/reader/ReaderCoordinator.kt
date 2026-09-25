@@ -205,8 +205,15 @@ class ReaderCoordinator(
     }
 
     fun close(requestId: String) {
-        generation.incrementAndGet()
         requestStore.remove(requestId)
+        // Deferred cleanup of an outgoing reader must not invalidate a newer request.
+        val currentRequestId = when (val current = mutableState.value) {
+            is ReaderUiState.Active -> current.requestId
+            is ReaderUiState.Error -> current.requestId
+            ReaderUiState.Idle -> null
+        }
+        if (currentRequestId != requestId) return
+        generation.incrementAndGet()
         mutableState.value = ReaderUiState.Idle
     }
 
