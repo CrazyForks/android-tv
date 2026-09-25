@@ -24,8 +24,66 @@ class PlaybackControllerProgressTest {
     fun pausingWhileBufferingRecordsResumePositionOnce() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val pausedPositions = CopyOnWriteArrayList<Long>()
+        withBufferingController(
+            onProgress = { position, reason ->
+                if (reason == ProgressReason.Paused) pausedPositions += position
+            },
+        ) { controller ->
+            instrumentation.runOnMainSync {
+                assertFalse(controller.player.isPlaying)
+                assertTrue(pausedPositions.isEmpty())
+                assertFalse(controller.togglePlayPause())
+            }
+            runBlocking {
+                withTimeout(10_000) {
+                    controller.status.first {
+                        it.playbackState == Player.STATE_BUFFERING && !it.playWhenReady
+                    }
+                }
+            }
+            assertEquals(listOf(12_000L), pausedPositions)
+
+            instrumentation.runOnMainSync { controller.player.pause() }
+            instrumentation.waitForIdleSync()
+            assertEquals(listOf(12_000L), pausedPositions)
+        }
+    }
+
+    @Test
+    fun playerAndScreenSeeksEachRecordResumePositionOnce() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val seekPositions = CopyOnWriteArrayList<Long>()
+        withBufferingController(
+            onProgress = { position, reason ->
+                if (reason == ProgressReason.Seeked) seekPositions += position
+            },
+        ) { controller ->
+            instrumentation.runOnMainSync {
+                assertTrue(seekPositions.isEmpty())
+                // MediaSession delegates commands to this Player, bypassing the screen wrapper.
+                controller.player.seekTo(30_000)
+                assertEquals(listOf(30_000L), seekPositions)
+
+                controller.seekTo(22_000)
+                assertEquals(listOf(30_000L, 22_000L), seekPositions)
+
+                controller.player.seekBack()
+                assertEquals(listOf(30_000L, 22_000L, 12_000L), seekPositions)
+
+                controller.seekTo(-1)
+            }
+            instrumentation.waitForIdleSync()
+            assertEquals(listOf(30_000L, 22_000L, 12_000L, 0L), seekPositions)
+        }
+    }
+
+    private fun withBufferingController(
+        onProgress: (Long, ProgressReason) -> Unit,
+        block: (PlaybackController) -> Unit,
+    ) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
         MockWebServer().use { server ->
-            // Hold preparation so pausing cannot change isPlaying, which is already false.
+            // Keep playback stationary so pause and seek callbacks have exact positions.
             server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
             server.start()
             lateinit var controller: PlaybackController
@@ -52,7 +110,7 @@ class PlaybackControllerProgressTest {
                     ),
                     subtitles = emptyList(),
                     onProgress = { _, position, _, reason ->
-                        if (reason == ProgressReason.Paused) pausedPositions += position
+                        onProgress(position, reason)
                     },
                 )
             }
@@ -65,23 +123,7 @@ class PlaybackControllerProgressTest {
                         }
                     }
                 }
-                instrumentation.runOnMainSync {
-                    assertFalse(controller.player.isPlaying)
-                    assertTrue(pausedPositions.isEmpty())
-                    assertFalse(controller.togglePlayPause())
-                }
-                runBlocking {
-                    withTimeout(10_000) {
-                        controller.status.first {
-                            it.playbackState == Player.STATE_BUFFERING && !it.playWhenReady
-                        }
-                    }
-                }
-                assertEquals(listOf(12_000L), pausedPositions)
-
-                instrumentation.runOnMainSync { controller.player.pause() }
-                instrumentation.waitForIdleSync()
-                assertEquals(listOf(12_000L), pausedPositions)
+                block(controller)
             } finally {
                 instrumentation.runOnMainSync { controller.release() }
             }

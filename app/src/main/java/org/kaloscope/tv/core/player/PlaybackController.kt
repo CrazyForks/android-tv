@@ -168,6 +168,17 @@ class PlaybackController internal constructor(
                 record(ProgressReason.Paused)
             }
         }
+
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int,
+        ) {
+            // MediaSession seeks bypass the screen's seekTo wrapper.
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                record(ProgressReason.Seeked)
+            }
+        }
     }
 
     val player: ExoPlayer
@@ -219,7 +230,6 @@ class PlaybackController internal constructor(
     fun seekTo(positionMillis: Long) {
         val duration = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
         player.seekTo(positionMillis.coerceIn(0, duration))
-        record(ProgressReason.Seeked)
     }
 
     fun selectSubtitle(trackId: String?) {
