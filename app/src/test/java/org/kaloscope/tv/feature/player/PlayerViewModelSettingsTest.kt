@@ -34,6 +34,7 @@ import org.kaloscope.tv.core.model.MediaDetail
 import org.kaloscope.tv.core.model.MediaProbe
 import org.kaloscope.tv.core.model.MediaSummary
 import org.kaloscope.tv.core.model.NetworkChapter
+import org.kaloscope.tv.core.model.NetworkDefinition
 import org.kaloscope.tv.core.model.NetworkPlaybackSource
 import org.kaloscope.tv.core.model.NetworkSearchResult
 import org.kaloscope.tv.core.model.NetworkVideoType
@@ -872,7 +873,16 @@ class PlayerViewModelSettingsTest {
             networkResourceRepository = repository,
         )
         try {
-            val request = networkRequest()
+            val initialRequest = networkRequest()
+            val request = initialRequest.copy(
+                source = initialRequest.source.copy(
+                    definitions = listOf(
+                        NetworkDefinition("1080P", initialRequest.source.url),
+                        NetworkDefinition("720P", "https://cdn.example.test/episode-1-720p.m3u8"),
+                    ),
+                    selectedDefinitionIndex = 0,
+                ),
+            )
             store.put(request)
             viewModel.load(session(), request.requestId)
             runCurrent()
@@ -883,15 +893,95 @@ class PlayerViewModelSettingsTest {
             repository.failChapterResolution()
             runCurrent()
 
-            assertEquals(
-                original.copy(switchError = AppError.Unauthorized),
-                viewModel.uiState.value,
-            )
+            val failed = original.copy(switchError = AppError.Unauthorized)
+            assertEquals(failed, viewModel.uiState.value)
             assertTrue(viewModel.uiState.value.hasUnauthorized())
             assertEquals(request, store.get(request.requestId))
+
+            repository.suspendResolution = false
+            viewModel.selectEpisode(session(), episodeIndex = 2)
+            runCurrent()
+            assertEquals(failed, viewModel.uiState.value)
+
+            viewModel.switchAdjacent(session(), offset = 1)
+            runCurrent()
+            assertEquals(failed, viewModel.uiState.value)
+
+            viewModel.selectDefinition(session(), definitionIndex = 1, positionMillis = 12_000)
+            runCurrent()
+            assertEquals(failed, viewModel.uiState.value)
+            assertEquals(1, repository.chapterResolutionCalls)
+            assertEquals(request, store.get(request.requestId))
+
+            viewModel.clearServer(session().server.id)
+            store.put(request)
+            viewModel.load(session(), request.requestId)
+            runCurrent()
+            viewModel.selectEpisode(session(), episodeIndex = 2)
+            runCurrent()
+
+            val selected = viewModel.uiState.value as PlayerUiState.Content
+            assertEquals(
+                2,
+                (selected.request as PlaybackRequest.NetworkVideo).source.selectedChapterIndex,
+            )
+            assertEquals(2, repository.chapterResolutionCalls)
+            assertFalse(selected.hasUnauthorized())
         } finally {
             viewModel.viewModelScope.cancel()
             runCurrent()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `ordinary network chapter failures remain retryable`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            for (statusCode in listOf(403, 500)) {
+                val store = PlaybackRequestStore()
+                val repository = RecordingNetworkResourceRepository().apply {
+                    suspendResolution = true
+                }
+                val viewModel = PlayerViewModel(
+                    requestStore = store,
+                    mediaRepository = unusedMediaRepository(),
+                    historyRepository = unusedHistoryRepository(),
+                    networkResourceRepository = repository,
+                )
+                try {
+                    val request = networkRequest()
+                    store.put(request)
+                    viewModel.load(session(), request.requestId)
+                    runCurrent()
+                    viewModel.selectEpisode(session(), episodeIndex = 1)
+                    runCurrent()
+                    repository.failChapterResolution(statusCode)
+                    runCurrent()
+                    val failed = viewModel.uiState.value as PlayerUiState.Content
+                    assertEquals(request, failed.request)
+                    assertFalse(failed.hasUnauthorized())
+                    assertTrue(failed.switchError != null)
+
+                    repository.suspendResolution = false
+                    viewModel.switchAdjacent(session(), offset = 1)
+                    runCurrent()
+
+                    val selected = viewModel.uiState.value as PlayerUiState.Content
+                    assertEquals(
+                        1,
+                        (selected.request as PlaybackRequest.NetworkVideo).source.selectedChapterIndex,
+                    )
+                    assertNull(selected.switchError)
+                    assertEquals(2, repository.chapterResolutionCalls)
+                    assertEquals(selected.request, store.get(request.requestId))
+                } finally {
+                    viewModel.viewModelScope.cancel()
+                    runCurrent()
+                }
+            }
+        } finally {
             Dispatchers.resetMain()
         }
     }
@@ -1187,6 +1277,7 @@ private class PlaybackExtrasRepository(
 
 private class RecordingNetworkResourceRepository : NetworkResourceRepository {
     var requestedChapterIndex: Int? = null
+    var chapterResolutionCalls = 0
     var suspendResolution = false
     private var pendingResolution: CancellableContinuation<NetworkPlaybackSource>? = null
 
@@ -1203,6 +1294,7 @@ private class RecordingNetworkResourceRepository : NetworkResourceRepository {
         chapterIndex: Int,
         preferredDefinition: TranscodeResolution,
     ): AppResult<NetworkPlaybackSource> {
+        chapterResolutionCalls += 1
         requestedChapterIndex = chapterIndex
         if (suspendResolution) {
             return networkCall(Json) {
@@ -1219,9 +1311,9 @@ private class RecordingNetworkResourceRepository : NetworkResourceRepository {
         )
     }
 
-    fun failChapterResolution() {
+    fun failChapterResolution(statusCode: Int = 401) {
         checkNotNull(pendingResolution).resumeWithException(
-            HttpException(Response.error<Unit>(401, "".toResponseBody())),
+            HttpException(Response.error<Unit>(statusCode, "".toResponseBody())),
         )
         pendingResolution = null
     }

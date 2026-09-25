@@ -17,6 +17,7 @@ import org.kaloscope.tv.core.model.MediaSummary
 import org.kaloscope.tv.core.model.Session
 import org.kaloscope.tv.core.model.WatchHistoryItem
 import org.kaloscope.tv.core.model.TvSettings
+import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.player.PlaybackOrigin
 import org.kaloscope.tv.core.player.PlaybackProgressRecorder
@@ -191,9 +192,7 @@ class PlayerViewModel @Inject constructor(
         definitionIndex: Int,
         positionMillis: Long,
     ) {
-        val request = (uiState.value as? PlayerUiState.Content)?.request
-            as? PlaybackRequest.NetworkVideo
-            ?: return
+        val request = requestForSelection() as? PlaybackRequest.NetworkVideo ?: return
         val selected = PlaybackRequestNavigator.selectDefinition(
             request,
             definitionIndex,
@@ -209,7 +208,7 @@ class PlayerViewModel @Inject constructor(
         session: Session,
         offset: Int,
     ) {
-        val request = (uiState.value as? PlayerUiState.Content)?.request ?: return
+        val request = requestForSelection() ?: return
         if (request is PlaybackRequest.LocalMedia) {
             val selected = PlaybackRequestNavigator.selectLocalAdjacent(request, offset) ?: return
             switchToLocalEpisode(session, selected)
@@ -227,7 +226,7 @@ class PlayerViewModel @Inject constructor(
         session: Session,
         episodeIndex: Int,
     ) {
-        val request = (uiState.value as? PlayerUiState.Content)?.request ?: return
+        val request = requestForSelection() ?: return
         if (request is PlaybackRequest.LocalMedia) {
             val selected = PlaybackRequestNavigator.selectLocalEpisode(
                 request,
@@ -242,6 +241,13 @@ class PlayerViewModel @Inject constructor(
             episodeIndex,
         ) ?: return
         switchToNetworkEpisode(session, networkRequest, chapterIndex)
+    }
+
+    private fun requestForSelection(): PlaybackRequest? {
+        val content = uiState.value as? PlayerUiState.Content ?: return null
+        // Keep chapter authentication failures visible until root session handling clears the player.
+        if (content.switchError == AppError.Unauthorized) return null
+        return content.request
     }
 
     private fun switchToLocalEpisode(
