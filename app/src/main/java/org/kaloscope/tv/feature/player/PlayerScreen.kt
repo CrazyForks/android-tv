@@ -215,7 +215,23 @@ private fun PlayerContent(
         )
     }
     DisposableEffect(seekCoordinator) {
-        onDispose(seekCoordinator::cancelPendingInteraction)
+        val listener = object : Player.Listener {
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                    // A delayed position poll can miss the seek acknowledgement window.
+                    seekCoordinator.reportPlayerPosition(newPosition.positionMs)
+                }
+            }
+        }
+        controller.player.addListener(listener)
+        onDispose {
+            controller.player.removeListener(listener)
+            seekCoordinator.cancelPendingInteraction()
+        }
     }
     val seekState by seekCoordinator.state.collectAsStateWithLifecycle()
     var bufferedPositionMillis by remember(playbackIdentity) { mutableLongStateOf(0L) }

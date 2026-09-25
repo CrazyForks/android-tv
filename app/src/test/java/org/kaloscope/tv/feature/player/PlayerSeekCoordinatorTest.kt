@@ -88,6 +88,29 @@ class PlayerSeekCoordinatorTest {
     }
 
     @Test
+    fun `seek event acknowledges target before delayed position samples`() = runTest {
+        lateinit var coordinator: PlayerSeekCoordinator
+        coordinator = PlayerSeekCoordinator(
+            scope = this,
+            onSeek = { positionMillis ->
+                // Media3 reports the seek position before the next periodic sample.
+                coordinator.reportPlayerPosition(positionMillis)
+            },
+        )
+        coordinator.reportPlayerPosition(10_000L)
+        coordinator.stepBy(durationMillis = 60_000L, offsetMillis = 10_000L)
+        advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+        runCurrent()
+
+        assertFalse(coordinator.state.value.seekPending)
+        coordinator.reportPlayerPosition(23_000L)
+        assertEquals(23_000L, coordinator.state.value.displayPositionMillis)
+
+        coordinator.adjustBy(durationMillis = 60_000L, offsetMillis = 10_000L)
+        assertEquals(33_000L, coordinator.state.value.displayPositionMillis)
+    }
+
+    @Test
     fun `preview clamps to duration and ignores unknown duration`() = runTest {
         val coordinator = PlayerSeekCoordinator(
             scope = this,

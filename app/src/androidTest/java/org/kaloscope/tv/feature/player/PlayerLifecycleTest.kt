@@ -1,6 +1,7 @@
 package org.kaloscope.tv.feature.player
 
 import android.net.Uri
+import android.os.SystemClock
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
@@ -121,6 +122,40 @@ class PlayerLifecycleTest {
             assertPositionNear(position, Progress(stop(owner), ProgressReason.Exit))
         } finally {
             composeRule.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test
+    fun delayedPositionSamplingDoesNotLeaveSeekPreviewStuck() {
+        var delayNextSeek = true
+        withPlayer(
+            onProgressRecorded = { event ->
+                if (event.reason == ProgressReason.Seeked && delayNextSeek) {
+                    delayNextSeek = false
+                    // Media3 continues on its playback thread while UI sampling is delayed.
+                    SystemClock.sleep(3_000)
+                }
+            },
+        ) { _ ->
+            val startCount = progress.count { it.reason == ProgressReason.Started }
+            pressProgressKey(Key.DirectionRight)
+            awaitStartAfter(startCount)
+            val firstSeek = progress.last { it.reason == ProgressReason.Seeked }.positionMillis
+
+            pressProgressKey(Key.Enter)
+            val pausedPosition = progress.last { it.reason == ProgressReason.Paused }.positionMillis
+            assertTrue(pausedPosition - firstSeek > 1_500)
+            composeRule.mainClock.advanceTimeBy(500)
+
+            pressProgressKey(Key.DirectionRight)
+            composeRule.waitUntil(10_000) {
+                progress.count { it.reason == ProgressReason.Seeked } == 2
+            }
+
+            assertPositionNear(
+                pausedPosition + 10_000,
+                progress.last { it.reason == ProgressReason.Seeked },
+            )
         }
     }
 
@@ -477,6 +512,7 @@ class PlayerLifecycleTest {
     private fun withPlayer(
         resumePositionMillis: Long = 5_000,
         awaitInitialStart: Boolean = true,
+        onProgressRecorded: (Progress) -> Unit = {},
         block: (PlayerLifecycleOwner) -> Unit,
     ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -536,7 +572,9 @@ class PlayerLifecycleTest {
                                     PlaybackControllerFactory(playerContext)
                                 },
                                 onProgress = { _, position, _, reason ->
-                                    progress += Progress(position, reason)
+                                    val event = Progress(position, reason)
+                                    progress += event
+                                    onProgressRecorded(event)
                                 },
                                 onSelectDefinition = { index, position ->
                                     PlaybackRequestNavigator.selectDefinition(
