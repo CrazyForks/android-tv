@@ -194,7 +194,11 @@ class ReaderCoordinator(
 
     fun dismissChapterError() {
         updateActive {
-            if (chapterError == AppError.Unauthorized) this else finishChapterLoading()
+            // A late dismissal must not finish a newer load that already cleared the error.
+            when (chapterError) {
+                null, AppError.Unauthorized -> this
+                else -> finishChapterLoading()
+            }
         }
     }
 

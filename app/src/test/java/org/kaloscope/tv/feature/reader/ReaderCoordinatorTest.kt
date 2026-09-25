@@ -196,6 +196,77 @@ class ReaderCoordinatorTest {
     }
 
     @Test
+    fun `late chapter error dismissal preserves active image and text retries`() = runTest {
+        for (request in listOf(imageRequest(), textRequest())) {
+            val pendingChapters = mutableMapOf<Int, CompletableDeferred<AppResult<ReaderContent>>>()
+            val loader = FakeReaderContentLoader(
+                chapterResult = AppResult.Failure(AppError.Offline),
+                chapterResults = pendingChapters,
+            )
+            val coordinator = ReaderCoordinator(ReaderRequestStore().apply { put(request) }, loader)
+            coordinator.load(request.requestId, session())
+            coordinator.selectChapter(session(), 1)
+            assertEquals(AppError.Offline, (coordinator.state.value as ReaderUiState.Active).chapterError)
+
+            val pending = CompletableDeferred<AppResult<ReaderContent>>()
+            pendingChapters[1] = pending
+            val retry = launch { coordinator.selectChapter(session(), 1) }
+            runCurrent()
+            val loading = coordinator.state.value as ReaderUiState.Active
+            assertTrue(loading.isChapterLoading)
+            assertNull(loading.chapterError)
+
+            coordinator.dismissChapterError()
+
+            assertEquals(loading, coordinator.state.value)
+            val replacement = when (val content = loading.content) {
+                is ReaderImageContent -> content.copy(
+                    images = listOf("chapter-1.jpg"),
+                    selectedChapterIndex = 1,
+                )
+
+                is ReaderTextContent -> content.copy(text = "Second chapter", selectedChapterIndex = 1)
+            }
+            pending.complete(AppResult.Success(replacement))
+            retry.join()
+
+            val loaded = coordinator.state.value as ReaderUiState.Active
+            assertEquals(replacement, loaded.content)
+            assertEquals(1L, loaded.contentRevision)
+            assertFalse(loaded.isChapterLoading)
+            assertNull(loaded.chapterError)
+            assertEquals(listOf(1, 1), loader.chapterRequests)
+        }
+    }
+
+    @Test
+    fun `late chapter error dismissal cannot start pagination for outgoing content`() = runTest {
+        val pendingChapters = mutableMapOf<Int, CompletableDeferred<AppResult<ReaderContent>>>()
+        val loader = FakeReaderContentLoader(
+            chapterResult = AppResult.Failure(AppError.Offline),
+            chapterResults = pendingChapters,
+            pageResults = ArrayDeque(
+                listOf(AppResult.Success(ReaderImagePage(listOf("old-page.jpg"), 3, false))),
+            ),
+        )
+        val coordinator = ReaderCoordinator(ReaderRequestStore().apply { put(imageRequest()) }, loader)
+        coordinator.load("reader-1", session())
+        coordinator.selectChapter(session(), 1)
+        val pending = CompletableDeferred<AppResult<ReaderContent>>()
+        pendingChapters[1] = pending
+        val retry = launch { coordinator.selectChapter(session(), 1) }
+        runCurrent()
+
+        coordinator.dismissChapterError()
+        coordinator.loadMoreImages(session())
+        pending.complete(AppResult.Success(chapterContent(1)))
+        retry.join()
+
+        assertTrue(loader.pageRequests.isEmpty())
+        assertEquals(chapterContent(1), (coordinator.state.value as ReaderUiState.Image).content)
+    }
+
+    @Test
     fun `text chapter replacement retains reader settings and advances content revision`() = runTest {
         val content = ReaderTextContent.network(
             indexerId = 11,
