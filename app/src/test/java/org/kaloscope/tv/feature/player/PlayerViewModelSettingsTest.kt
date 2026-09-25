@@ -793,6 +793,7 @@ class PlayerViewModelSettingsTest {
             if (
                 PlaybackSettingsPolicy.shouldAutoAdvance(
                     playbackState = Player.STATE_ENDED,
+                    playWhenReady = true,
                     autoplayNext = switching.request.autoplayNext,
                     hasNext = PlaybackRequestNavigator.hasNext(switching.request),
                     switchingItem = switching.switchingItem,

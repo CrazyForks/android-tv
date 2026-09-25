@@ -450,10 +450,11 @@ private fun PlayerContent(
             speedDrawerOpen = false
         }
     }
-    LaunchedEffect(playbackIdentity, status.playbackState) {
+    LaunchedEffect(playbackIdentity, status.playbackState, status.playWhenReady) {
         if (
             PlaybackSettingsPolicy.shouldAutoAdvance(
                 playbackState = status.playbackState,
+                playWhenReady = status.playWhenReady,
                 autoplayNext = state.request.autoplayNext,
                 hasNext = hasNext,
                 switchingItem = state.switchingItem,

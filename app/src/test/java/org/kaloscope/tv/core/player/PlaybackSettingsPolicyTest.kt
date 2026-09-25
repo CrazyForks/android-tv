@@ -11,6 +11,7 @@ class PlaybackSettingsPolicyTest {
         assertTrue(
             PlaybackSettingsPolicy.shouldAutoAdvance(
                 playbackState = Player.STATE_ENDED,
+                playWhenReady = true,
                 autoplayNext = true,
                 hasNext = true,
                 switchingItem = false,
@@ -19,6 +20,7 @@ class PlaybackSettingsPolicyTest {
         assertFalse(
             PlaybackSettingsPolicy.shouldAutoAdvance(
                 playbackState = Player.STATE_READY,
+                playWhenReady = true,
                 autoplayNext = true,
                 hasNext = true,
                 switchingItem = false,
@@ -27,6 +29,7 @@ class PlaybackSettingsPolicyTest {
         assertFalse(
             PlaybackSettingsPolicy.shouldAutoAdvance(
                 playbackState = Player.STATE_ENDED,
+                playWhenReady = true,
                 autoplayNext = false,
                 hasNext = true,
                 switchingItem = false,
@@ -35,8 +38,22 @@ class PlaybackSettingsPolicyTest {
         assertFalse(
             PlaybackSettingsPolicy.shouldAutoAdvance(
                 playbackState = Player.STATE_ENDED,
+                playWhenReady = true,
                 autoplayNext = true,
                 hasNext = false,
+                switchingItem = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `paused playback does not auto advance at the end`() {
+        assertFalse(
+            PlaybackSettingsPolicy.shouldAutoAdvance(
+                playbackState = Player.STATE_ENDED,
+                playWhenReady = false,
+                autoplayNext = true,
+                hasNext = true,
                 switchingItem = false,
             ),
         )
@@ -47,6 +64,7 @@ class PlaybackSettingsPolicyTest {
         assertFalse(
             PlaybackSettingsPolicy.shouldAutoAdvance(
                 playbackState = Player.STATE_ENDED,
+                playWhenReady = true,
                 autoplayNext = true,
                 hasNext = true,
                 switchingItem = true,
