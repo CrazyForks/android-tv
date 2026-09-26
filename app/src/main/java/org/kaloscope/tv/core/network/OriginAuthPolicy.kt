@@ -1,6 +1,6 @@
 package org.kaloscope.tv.core.network
 
-import java.net.URI
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.kaloscope.tv.core.model.Session
 
 /**
@@ -29,15 +29,7 @@ private data class Origin(
 )
 
 private fun String.toOrigin(): Origin? {
-    val uri = runCatching { URI(this) }.getOrNull() ?: return null
-    val scheme = uri.scheme?.lowercase() ?: return null
-    val host = uri.host?.lowercase() ?: return null
-    // Explicit and implicit default ports represent the same HTTP origin.
-    val port = when {
-        uri.port >= 0 -> uri.port
-        scheme == "http" -> 80
-        scheme == "https" -> 443
-        else -> return null
-    }
-    return Origin(scheme = scheme, host = host, port = port)
+    // Use the HTTP client's parser so valid resource paths do not lose authorization.
+    val url = toHttpUrlOrNull() ?: return null
+    return Origin(scheme = url.scheme, host = url.host, port = url.port)
 }

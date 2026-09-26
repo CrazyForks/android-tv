@@ -37,6 +37,20 @@ class ServerImageResolverTest {
     }
 
     @Test
+    fun `relative image paths with spaces retain server authorization for every policy`() {
+        val paths = listOf("covers/page 1.webp", "/_api/covers/page 1.webp")
+        for (policy in ServerImagePolicy.entries) {
+            for (path in paths) {
+                val request = ServerImageResolver.resolve(session(), path, policy)
+
+                checkNotNull(request)
+                assertEquals("https://media.example/_api/covers/page 1.webp", request.url)
+                assertEquals("Token token-one", request.authorization)
+            }
+        }
+    }
+
+    @Test
     fun `proxied remote image is routed through current server`() {
         val request = ServerImageResolver.resolve(
             session = session(),

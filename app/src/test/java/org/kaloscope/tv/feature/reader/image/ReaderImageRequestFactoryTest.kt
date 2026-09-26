@@ -1,5 +1,6 @@
 package org.kaloscope.tv.feature.reader.image
 
+import okhttp3.Request
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.kaloscope.tv.core.model.SavedServer
@@ -46,5 +47,23 @@ class ReaderImageRequestFactoryTest {
             request.url,
         )
         assertEquals("Token token-one", request.authorization)
+    }
+
+    @Test
+    fun sameOriginReaderImageWithSpacesRetainsAuthorization() {
+        val request = ReaderImageRequestFactory.resolve(
+            session = Session(
+                server = SavedServer("server-one", "Test", "https://media.example"),
+                token = "token-one",
+                user = SessionUser(1, "tv_user", "user"),
+            ),
+            rawUrl = "/_api/covers/page 1.webp?variant=full size",
+        )
+
+        checkNotNull(request)
+        assertEquals("Token token-one", request.authorization)
+        val httpRequest = Request.Builder().url(request.url).build()
+        assertEquals("/_api/covers/page%201.webp", httpRequest.url.encodedPath)
+        assertEquals("full size", httpRequest.url.queryParameter("variant"))
     }
 }
