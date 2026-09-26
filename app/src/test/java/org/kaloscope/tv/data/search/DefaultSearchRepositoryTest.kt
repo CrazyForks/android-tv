@@ -251,6 +251,44 @@ class DefaultSearchRepositoryTest {
     }
 
     @Test
+    fun `malformed numeric search metadata returns invalid data and allows retry`() = runTest {
+        val profile = org.kaloscope.tv.core.model.IndexerSourceProfile(
+            indexer = indexer(),
+            pageSize = 20,
+            keywordRequired = true,
+        )
+        for (field in listOf("rating", "ranking")) {
+            for (value in listOf("{}", "[]")) {
+                server.enqueue(
+                    jsonResponse(
+                        """
+                        {"status":200,"message":"","data":{
+                          "totalPages":1,"items":[{
+                            "id":"video-1","title":"Video","media_type":"video","$field":$value
+                          }]
+                        }}
+                        """.trimIndent(),
+                    ),
+                )
+                server.enqueue(jsonResponse(fixture("indexer-search-success.json")))
+                val requestsBefore = server.requestCount
+
+                val failed = repository.search(session(), profile, "Video", emptyMap(), 1)
+
+                assertTrue("$field=$value", (failed as AppResult.Failure).error is AppError.InvalidData)
+                assertEquals(requestsBefore + 1, server.requestCount)
+
+                val retried = repository.search(session(), profile, "Video", emptyMap(), 1)
+
+                val item = (retried as AppResult.Success).value.items.single()
+                assertEquals("48716677", item.id)
+                assertEquals(4, item.ranking)
+                assertEquals(requestsBefore + 2, server.requestCount)
+            }
+        }
+    }
+
+    @Test
     fun `search accepts numeric resource size`() = runTest {
         server.enqueue(
             jsonResponse(

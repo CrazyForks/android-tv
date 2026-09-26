@@ -7,7 +7,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import org.kaloscope.tv.core.common.trimmedOrNull
 import org.kaloscope.tv.core.model.DanmakuComment
 import org.kaloscope.tv.core.model.NetworkChapter
@@ -201,7 +200,7 @@ private fun IndexerResourceData.toSearchResult(
         id = resolvedId,
         title = resolvedTitle,
         coverPath = cover.trimmedOrNull(),
-        rating = rating?.jsonPrimitive?.doubleOrNull,
+        rating = rating.toNumberOrNull(),
         category = category.trimmedOrNull(),
         uploader = uploader.trimmedOrNull(),
         uploadedAt = uploadedAt.trimmedOrNull(),
@@ -222,8 +221,15 @@ internal fun IndexerResourceData.toTextBody(): String? =
         else -> null
     }
 
+private fun JsonElement?.toNumberOrNull(): Double? =
+    when (this) {
+        null -> null
+        is JsonPrimitive -> doubleOrNull
+        else -> throw SerializationException("Invalid numeric search metadata")
+    }
+
 private fun JsonElement?.toRankingOrNull(): Int? {
-    val value = this?.jsonPrimitive?.doubleOrNull ?: return null
+    val value = toNumberOrNull() ?: return null
     return value.takeIf { it.isFinite() && it in 1.0..100.0 }?.roundToInt()
 }
 

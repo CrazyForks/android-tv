@@ -1,8 +1,13 @@
 package org.kaloscope.tv.data.media
 
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.kaloscope.tv.core.model.MediaLibraryType
 import org.kaloscope.tv.core.model.MediaSummary
@@ -44,6 +49,54 @@ class MediaMapperTest {
         assertEquals("Stellar Archive", page.items.single().title)
         assertEquals(8.8, page.items.single().rating)
         assertEquals(false, page.hasNext)
+    }
+
+    @Test
+    fun `media pages details and children reject structured ratings`() {
+        for (rating in listOf(JsonObject(emptyMap()), JsonArray(emptyList()))) {
+            val item = MediaItemData(
+                id = 201,
+                name = "Video",
+                path = "/media/video.mkv",
+                rating = rating,
+            )
+
+            assertThrows(SerializationException::class.java) {
+                MediaPageData(total = 1, items = listOf(item))
+                    .toModel(pageNumber = 1, pageSize = 20)
+            }
+            assertThrows(SerializationException::class.java) { item.toDetail() }
+            assertThrows(SerializationException::class.java) {
+                item.copy(id = 200, rating = null, children = listOf(item)).toDetail()
+            }
+        }
+    }
+
+    @Test
+    fun `media ratings preserve scalar and missing value semantics`() {
+        val cases = listOf(
+            null to null,
+            JsonNull to null,
+            JsonPrimitive("") to null,
+            JsonPrimitive("not-a-rating") to null,
+            JsonPrimitive(true) to null,
+            JsonPrimitive("8.6") to 8.6,
+            JsonPrimitive(7.5) to 7.5,
+        )
+        for ((rating, expected) in cases) {
+            val item = MediaItemData(
+                id = 201,
+                name = "Video",
+                path = "/media/video.mkv",
+                rating = rating,
+            )
+            val page = MediaPageData(total = 1, items = listOf(item))
+                .toModel(pageNumber = 1, pageSize = 20)
+            val detail = checkNotNull(item.toDetail())
+
+            assertEquals(expected, page.items.single().rating)
+            assertEquals(expected, detail.rating)
+        }
     }
 
     @Test

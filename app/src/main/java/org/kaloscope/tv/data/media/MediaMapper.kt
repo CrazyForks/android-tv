@@ -2,8 +2,9 @@ package org.kaloscope.tv.data.media
 
 import kotlin.math.roundToLong
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import org.kaloscope.tv.core.common.trimmedOrNull
 import org.kaloscope.tv.core.model.MediaActor
 import org.kaloscope.tv.core.model.MediaChapter
@@ -172,8 +173,12 @@ private fun compareNaturalTitles(left: String, right: String): Int {
 private fun MediaItemData.displayTitle(): String =
     title.trimmedOrNull() ?: name.trim()
 
-private fun kotlinx.serialization.json.JsonElement?.asRating(): Double? =
-    this?.jsonPrimitive?.doubleOrNull
+private fun JsonElement?.asRating(): Double? =
+    when (this) {
+        null -> null
+        is JsonPrimitive -> doubleOrNull
+        else -> throw SerializationException("Invalid media rating")
+    }
 
 private fun List<String>?.cleanValues(): List<String> =
     orEmpty().mapNotNull(String?::trimmedOrNull)

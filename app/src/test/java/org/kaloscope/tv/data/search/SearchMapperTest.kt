@@ -253,6 +253,41 @@ class SearchMapperTest {
     }
 
     @Test
+    fun `search numeric metadata rejects structured values`() {
+        for (value in listOf(JsonObject(emptyMap()), JsonArray(emptyList()))) {
+            for (item in listOf(
+                resource("v1", "Video", "video").copy(rating = value),
+                resource("v1", "Video", "video").copy(ranking = value),
+            )) {
+                assertThrows(SerializationException::class.java) {
+                    IndexerResourcePageData(items = listOf(item))
+                        .toModel(pageNumber = 1, pageSize = 20)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `search ratings preserve scalar and missing value semantics`() {
+        val cases = listOf(
+            null to null,
+            JsonNull to null,
+            JsonPrimitive("") to null,
+            JsonPrimitive("not-a-rating") to null,
+            JsonPrimitive(true) to null,
+            JsonPrimitive("8.6") to 8.6,
+            JsonPrimitive(7.5) to 7.5,
+        )
+        val model = IndexerResourcePageData(
+            items = cases.mapIndexed { index, (rating, _) ->
+                resource("v$index", "Video $index", "video").copy(rating = rating)
+            },
+        ).toModel(pageNumber = 1, pageSize = 20)
+
+        assertEquals(cases.map { it.second }, model.items.map { it.rating })
+    }
+
+    @Test
     fun `search ranking normalizes web grid values`() {
         val rankings = listOf(
             JsonPrimitive("3"),
@@ -260,6 +295,12 @@ class SearchMapperTest {
             JsonPrimitive(0),
             JsonPrimitive(101),
             JsonPrimitive("not-a-rank"),
+            null,
+            JsonNull,
+            JsonPrimitive(true),
+            JsonPrimitive(""),
+            JsonPrimitive("NaN"),
+            JsonPrimitive("Infinity"),
         )
         val model = IndexerResourcePageData(
             items = rankings.mapIndexed { index, ranking ->
@@ -273,7 +314,7 @@ class SearchMapperTest {
         ).toModel(pageNumber = 1, pageSize = 20)
 
         assertEquals(
-            listOf(3, 3, null, null, null),
+            listOf(3, 3, null, null, null, null, null, null, null, null, null),
             model.items.map { it.ranking },
         )
     }
