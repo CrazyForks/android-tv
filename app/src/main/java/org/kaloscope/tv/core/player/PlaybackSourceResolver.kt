@@ -32,6 +32,7 @@ object PlaybackSourceResolver {
         rawUrl: String,
     ): String =
         when {
+            rawUrl.startsWith("//") -> "${session.server.origin.toHttpUrl().scheme}:$rawUrl"
             rawUrl.startsWith("/") -> "${session.server.origin}$rawUrl"
             else -> rawUrl
         }
