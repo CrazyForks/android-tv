@@ -1,6 +1,9 @@
 package org.kaloscope.tv.data.search
 
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
@@ -307,6 +310,7 @@ class SearchMapperTest {
         assertEquals("/_api/media/proxy?id=1", source.url)
         assertEquals(NetworkVideoType.Hls, source.videoType)
         assertEquals("Ready", source.danmakus.single().text)
+        assertNull(source.selectedChapterIndex)
     }
 
     @Test
@@ -341,6 +345,40 @@ class SearchMapperTest {
         assertEquals("https://cdn.example/1080.m3u8", source.url)
         assertEquals("1080", source.selectedDefinition?.label)
         assertEquals(listOf("第 1 集", "第 2 集"), source.chapters.map { it.title })
+        assertEquals(0, source.selectedChapterIndex)
+    }
+
+    @Test
+    fun `resolved video identifies its chapter after invalid entries are filtered`() {
+        val playbackUrl = "https://cdn.example/ep-2.m3u8"
+        for (useDefinition in listOf(false, true)) {
+            val source = IndexerResourceData(
+                id = " ep-2 ",
+                title = "Episode 2",
+                mediaType = "video",
+                url = if (useDefinition) null else playbackUrl,
+                definitions = if (useDefinition) {
+                    listOf(IndexerDefinitionData(playbackUrl, JsonPrimitive("1080P")))
+                } else {
+                    emptyList()
+                },
+                chapters = listOf(
+                    IndexerChapterData(null, null, "Unavailable", null),
+                    IndexerChapterData("ep-1", null, "Episode 1", null),
+                    IndexerChapterData(" ep-2 ", null, "Episode 2", null),
+                    IndexerChapterData("ep-3", null, "Episode 3", null),
+                ),
+            ).toPlaybackSource(
+                indexerId = 11,
+                fallbackTitle = "Series",
+                preferredDefinition = TranscodeResolution.P1080,
+            )
+
+            checkNotNull(source)
+            assertEquals(playbackUrl, source.url)
+            assertEquals(listOf("ep-1", "ep-2", "ep-3"), source.chapters.map { it.id })
+            assertEquals("useDefinition=$useDefinition", 1, source.selectedChapterIndex)
+        }
     }
 
     @Test
@@ -376,20 +414,57 @@ class SearchMapperTest {
 
     @Test
     fun `invalid definition label fails even when definition URL is missing`() {
-        val resource = resource("v1", "Video", "video").copy(
-            url = "https://cdn.example/video.mp4",
-            definitions = listOf(
-                IndexerDefinitionData(definition = JsonObject(emptyMap())),
-            ),
+        for (label in listOf(JsonObject(emptyMap()), JsonArray(emptyList()))) {
+            val resource = resource("v1", "Video", "video").copy(
+                url = "https://cdn.example/video.mp4",
+                definitions = listOf(IndexerDefinitionData(definition = label)),
+            )
+
+            assertThrows(SerializationException::class.java) {
+                resource.toPlaybackSource(
+                    indexerId = 11,
+                    fallbackTitle = "Fallback",
+                    preferredDefinition = TranscodeResolution.P1080,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `definition labels keep primitive values and skip empty values`() {
+        val labels = listOf(
+            null,
+            JsonNull,
+            JsonPrimitive("  "),
+            JsonPrimitive(" 1080P "),
+            JsonPrimitive(720),
+            JsonPrimitive(true),
+        )
+        val source = resource("v1", "Video", "video").copy(
+            definitions = labels.mapIndexed { index, label ->
+                IndexerDefinitionData(
+                    url = "https://cdn.example/quality-$index.m3u8",
+                    definition = label,
+                )
+            },
+        ).toPlaybackSource(
+            indexerId = 11,
+            fallbackTitle = "Fallback",
+            preferredDefinition = TranscodeResolution.P1080,
         )
 
-        assertThrows(IllegalArgumentException::class.java) {
-            resource.toPlaybackSource(
-                indexerId = 11,
-                fallbackTitle = "Fallback",
-                preferredDefinition = TranscodeResolution.P1080,
-            )
-        }
+        checkNotNull(source)
+        assertEquals(listOf("1080P", "720", "true"), source.definitions.map { it.label })
+        assertEquals(
+            listOf(
+                "https://cdn.example/quality-3.m3u8",
+                "https://cdn.example/quality-4.m3u8",
+                "https://cdn.example/quality-5.m3u8",
+            ),
+            source.definitions.map { it.url },
+        )
+        assertEquals(0, source.selectedDefinitionIndex)
+        assertEquals("https://cdn.example/quality-3.m3u8", source.url)
     }
 
     @Test
@@ -474,6 +549,28 @@ class SearchMapperTest {
         checkNotNull(source)
         assertEquals("https://cdn.example/ep-1.mpd", source.url)
         assertEquals(NetworkVideoType.Dash, source.videoType)
+        assertEquals(0, source.selectedChapterIndex)
+    }
+
+    @Test
+    fun `directory fallback starts at first direct chapter even when another id matches`() {
+        val source = IndexerResourceData(
+            id = "ep-2",
+            title = "Series",
+            mediaType = "video",
+            url = " ",
+            chapters = listOf(
+                IndexerChapterData(null, "https://cdn.example/ep-1.m3u8", "Episode 1", null),
+                IndexerChapterData("ep-2", "https://cdn.example/ep-2.m3u8", "Episode 2", null),
+            ),
+        ).toPlaybackSource(
+            indexerId = 11,
+            fallbackTitle = "Series",
+            preferredDefinition = TranscodeResolution.P1080,
+        )
+
+        checkNotNull(source)
+        assertEquals("https://cdn.example/ep-1.m3u8", source.url)
         assertEquals(0, source.selectedChapterIndex)
     }
 

@@ -21,6 +21,7 @@ import org.kaloscope.tv.data.media.MediaRepository
 sealed interface PlayerUiState {
     data class Loading(
         val stage: PlaybackPreparationStage = PlaybackPreparationStage.Resource,
+        val progressError: AppError? = null,
     ) : PlayerUiState
 
     data object MissingRequest : PlayerUiState
@@ -70,12 +71,17 @@ class PlayerCoordinator(
             mutableState.value = PlayerUiState.MissingRequest
             return
         }
-        mutableState.value = buildContent(
+        val content = buildContent(
             session = session,
             request = request,
             onPreparationStage = { stage ->
-                mutableState.value = PlayerUiState.Loading(stage)
+                val loading = mutableState.value as? PlayerUiState.Loading
+                mutableState.value = PlayerUiState.Loading(stage, loading?.progressError)
             },
+        )
+        // A previous player's final progress write can fail while this request prepares.
+        mutableState.value = content.copy(
+            progressError = (mutableState.value as? PlayerUiState.Loading)?.progressError,
         )
     }
 
@@ -207,7 +213,12 @@ class PlayerCoordinator(
     }
 
     fun reportProgressFailure(mediaId: Long, error: AppError) {
-        val content = mutableState.value as? PlayerUiState.Content ?: return
+        val current = mutableState.value
+        if (current is PlayerUiState.Loading && error == AppError.Unauthorized) {
+            mutableState.value = current.copy(progressError = error)
+            return
+        }
+        val content = current as? PlayerUiState.Content ?: return
         // Auth failures must remain visible until the root clears the session.
         if (content.progressError == AppError.Unauthorized) return
         progressErrorMediaId = mediaId

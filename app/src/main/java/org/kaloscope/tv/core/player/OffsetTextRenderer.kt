@@ -68,11 +68,13 @@ internal class OffsetTextRenderer(
         positionUs: Long,
         elapsedRealtimeUs: Long,
     ) {
+        // Snapshot the version before the offset so concurrent changes remain pending.
+        val clockVersion = clock.version
         val adjustedPositionUs = clock.adjustedPositionUs(positionUs)
-        if (appliedClockVersion != clock.version) {
+        if (appliedClockVersion != clockVersion) {
             // Reset only text state so changing subtitle offset never seeks audio or video.
             delegate.resetPosition(adjustedPositionUs, false)
-            appliedClockVersion = clock.version
+            appliedClockVersion = clockVersion
         }
         delegate.render(adjustedPositionUs, elapsedRealtimeUs)
     }

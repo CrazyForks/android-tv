@@ -37,6 +37,16 @@ class RootStateInspectionTest {
     }
 
     @Test
+    fun `progress authorization failure invalidates the session while player prepares`() {
+        val loading = PlayerUiState.Loading(progressError = AppError.Unauthorized)
+
+        assertTrue(loading.hasUnauthorized())
+        for (error in listOf(null, AppError.Forbidden, AppError.Offline, AppError.Timeout)) {
+            assertFalse(loading.copy(progressError = error).hasUnauthorized())
+        }
+    }
+
+    @Test
     fun `network episode authorization failure invalidates the ready session`() {
         val content = networkPlayerContent().copy(switchError = AppError.Unauthorized)
 

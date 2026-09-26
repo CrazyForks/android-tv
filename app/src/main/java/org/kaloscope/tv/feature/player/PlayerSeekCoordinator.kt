@@ -30,10 +30,16 @@ internal class PlayerSeekCoordinator(
 
     private var submitJob: Job? = null
 
-    fun reportPlayerPosition(positionMillis: Long) {
+    fun reportPlayerPosition(
+        positionMillis: Long,
+        durationMillis: Long = 0L,
+    ) {
         val reportedPositionMillis = positionMillis.coerceAtLeast(0L)
         val current = mutableState.value
+        // The controller may clamp a preview made before the stream's duration was known.
+        val maximumPositionMillis = durationMillis.takeIf { it > 0L } ?: Long.MAX_VALUE
         val submittedTargetMillis = current.submittedTargetMillis
+            ?.coerceAtMost(maximumPositionMillis)
         mutableState.value = if (
             submittedTargetMillis != null &&
             abs(reportedPositionMillis - submittedTargetMillis) <=
@@ -45,7 +51,12 @@ internal class PlayerSeekCoordinator(
                 submittedTargetMillis = null,
             )
         } else {
-            current.copy(reportedPositionMillis = reportedPositionMillis)
+            current.copy(
+                reportedPositionMillis = reportedPositionMillis,
+                targetPositionMillis = current.targetPositionMillis
+                    ?.coerceAtMost(maximumPositionMillis),
+                submittedTargetMillis = submittedTargetMillis,
+            )
         }
     }
 

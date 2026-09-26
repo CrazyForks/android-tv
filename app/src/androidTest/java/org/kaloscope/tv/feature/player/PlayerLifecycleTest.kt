@@ -195,6 +195,64 @@ class PlayerLifecycleTest {
         assertFailureAllowsRemoteRetry(showPreview = true, confirmKey = Key.Enter)
     }
 
+    @Test
+    fun failureDuringSeekPreviewDoesNotOffsetNextSeekAfterRetry() = withPlayer { _ ->
+        pressProgressKey(Key.Enter)
+        composeRule.mainClock.advanceTimeBy(500)
+        val seekCount = progress.count { it.reason == ProgressReason.Seeked }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val audio = File(checkNotNull(Uri.parse(request.value.source.url).path))
+        val audioBytes = audio.readBytes()
+        val subtitle = File.createTempFile("player-seek-retry-", ".vtt", context.cacheDir)
+        var rightHeld = false
+        try {
+            subtitle.writeText("WEBVTT\n\n00:00:00.000 --> 00:01:00.000\nSeek retry fixture\n")
+            composeRule.onNodeWithTag("player-progress")
+                .performSemanticsAction(SemanticsActions.RequestFocus)
+                .performKeyInput { keyDown(Key.DirectionRight) }
+            rightHeld = true
+
+            // Fail the current controller while the seek preview still awaits key-up.
+            assertTrue(audio.delete())
+            composeRule.runOnIdle {
+                subtitles.value = listOf(
+                    SubtitleTrack(
+                        id = "seek-retry-fixture",
+                        label = "English",
+                        url = Uri.fromFile(subtitle).toString(),
+                        language = "en",
+                    ),
+                )
+            }
+            composeRule.waitUntil(10_000) { progress.any { it.reason == ProgressReason.Error } }
+            val retry = composeRule.onNodeWithText(context.getString(R.string.retry))
+            retry.assertIsDisplayed().assertIsFocused()
+            composeRule.onRoot().performKeyInput { keyUp(Key.DirectionRight) }
+            rightHeld = false
+            assertEquals(seekCount, progress.count { it.reason == ProgressReason.Seeked })
+
+            audio.writeBytes(audioBytes)
+            val startCount = progress.count { it.reason == ProgressReason.Started }
+            retry.performKeyInput { pressKey(Key.DirectionCenter) }
+            awaitStartAfter(startCount)
+            pressProgressKey(Key.Enter)
+            val pausedPosition = progress.last { it.reason == ProgressReason.Paused }.positionMillis
+            composeRule.mainClock.advanceTimeBy(500)
+
+            pressProgressKey(Key.DirectionRight)
+            composeRule.waitUntil(10_000) {
+                progress.count { it.reason == ProgressReason.Seeked } > seekCount
+            }
+            assertPositionNear(
+                pausedPosition + 10_000,
+                progress.last { it.reason == ProgressReason.Seeked },
+            )
+        } finally {
+            if (rightHeld) composeRule.onRoot().performKeyInput { keyUp(Key.DirectionRight) }
+            subtitle.delete()
+        }
+    }
+
     private fun assertFailureAllowsRemoteRetry(showPreview: Boolean, confirmKey: Key) =
         withPlayer { _ ->
             val instrumentation = InstrumentationRegistry.getInstrumentation()

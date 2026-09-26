@@ -121,6 +121,8 @@ class DefaultNetworkResourceRepository @Inject constructor(
                 fallbackVideoType = source.videoType,
             ) ?: throw SerializationException("Missing playable network chapter")
             resolved.copy(
+                // Response IDs may identify a chapter; further requests still need the catalog ID.
+                resourceId = source.resourceId,
                 chapters = source.chapters,
                 selectedChapterIndex = chapterIndex,
             )
@@ -204,7 +206,7 @@ class DefaultNetworkResourceRepository @Inject constructor(
             preferredDefinition = preferredDefinition,
             preferHevcForDash = videoCodecSupport.shouldPreferHevcForDash(),
             fallbackVideoType = fallbackVideoType,
-        ) ?: run {
+        )?.copy(resourceId = resourceId) ?: run {
             val chapters = resource.toChapters()
             val chapter = chapters.firstOrNull()
                 ?: throw SerializationException("Missing playable network source")
@@ -223,6 +225,7 @@ class DefaultNetworkResourceRepository @Inject constructor(
                 fallbackVideoType = resource.videoType.resolveVideoType(fallbackVideoType),
             ) ?: throw SerializationException("Missing playable network chapter")
             resolved.copy(
+                resourceId = resourceId,
                 chapters = chapters,
                 selectedChapterIndex = chapters.indices.firstOrNull(),
             )

@@ -223,7 +223,10 @@ private fun PlayerContent(
             ) {
                 if (reason == Player.DISCONTINUITY_REASON_SEEK) {
                     // A delayed position poll can miss the seek acknowledgement window.
-                    seekCoordinator.reportPlayerPosition(newPosition.positionMs)
+                    seekCoordinator.reportPlayerPosition(
+                        positionMillis = newPosition.positionMs,
+                        durationMillis = controller.player.duration,
+                    )
                 }
             }
         }
@@ -316,7 +319,10 @@ private fun PlayerContent(
     }
     LaunchedEffect(controller, seekCoordinator) {
         while (true) {
-            seekCoordinator.reportPlayerPosition(controller.player.currentPosition)
+            seekCoordinator.reportPlayerPosition(
+                positionMillis = controller.player.currentPosition,
+                durationMillis = controller.player.duration,
+            )
             bufferedPositionMillis = controller.player.bufferedPosition.coerceAtLeast(0L)
             delay(500)
         }
@@ -443,6 +449,8 @@ private fun PlayerContent(
     }
     LaunchedEffect(status.failure) {
         if (status.failure != null) {
+            // Error actions take over key-up, so an unfinished seek must not survive retry.
+            seekCoordinator.cancelPendingInteraction()
             episodeDrawerOpen = false
             restoreEpisodeFocus = false
             definitionDrawerOpen = false

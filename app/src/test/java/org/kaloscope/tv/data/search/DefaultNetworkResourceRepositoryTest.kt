@@ -4,13 +4,16 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.DanmakuComment
 import org.kaloscope.tv.core.model.NetworkChapter
@@ -28,6 +31,8 @@ import org.kaloscope.tv.core.model.Session
 import org.kaloscope.tv.core.model.SessionUser
 import org.kaloscope.tv.core.network.ApiClientFactory
 import org.kaloscope.tv.core.player.NetworkVideoCodecSupport
+import org.kaloscope.tv.core.player.PlaybackRequest
+import org.kaloscope.tv.core.player.PlaybackRequestNavigator
 import org.kaloscope.tv.core.player.PlaybackSourceResolver
 import org.kaloscope.tv.core.player.TranscodeResolution
 
@@ -146,6 +151,92 @@ class DefaultNetworkResourceRepositoryTest {
     }
 
     @Test
+    fun `malformed video definition returns invalid data and allows retry`() = runTest {
+        server.enqueue(
+            response(
+                """
+                {"status":200,"message":"","data":{
+                  "id":"video-1","title":"Video","media_type":"video","video_type":"hls",
+                  "definitions":[{"url":"https://cdn.example/video.m3u8","definition":{}}]
+                }}
+                """.trimIndent(),
+            ),
+        )
+        server.enqueue(
+            response(
+                """
+                {"status":200,"message":"","data":{
+                  "id":"video-1","title":"Video","media_type":"video","video_type":"hls",
+                  "definitions":[{"url":"https://cdn.example/video.m3u8","definition":"1080P"}]
+                }}
+                """.trimIndent(),
+            ),
+        )
+
+        val failed = repository.resolveResource(
+            session = session(),
+            indexerId = 11,
+            result = result("video-1", NetworkMediaType.Video),
+            preferredDefinition = TranscodeResolution.P1080,
+        )
+
+        assertTrue((failed as AppResult.Failure).error is AppError.InvalidData)
+        assertEquals(1, server.requestCount)
+
+        val retried = repository.resolveResource(
+            session = session(),
+            indexerId = 11,
+            result = result("video-1", NetworkMediaType.Video),
+            preferredDefinition = TranscodeResolution.P1080,
+        )
+
+        val source = ((retried as AppResult.Success).value as ResolvedNetworkResource.Video).source
+        assertEquals("https://cdn.example/video.m3u8", source.url)
+        assertEquals("1080P", source.definitions.single().label)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun `malformed chapter definition returns invalid data`() = runTest {
+        server.enqueue(
+            response(
+                """
+                {"status":200,"message":"","data":{
+                  "id":"episode-2","title":"Episode 2","media_type":"video","video_type":"hls",
+                  "definitions":[{"url":"https://cdn.example/episode-2.m3u8","definition":[]}]
+                }}
+                """.trimIndent(),
+            ),
+        )
+        val current = NetworkPlaybackSource(
+            indexerId = 11,
+            resourceId = "series-1",
+            title = "Episode 1",
+            url = "https://cdn.example/episode-1.m3u8",
+            videoType = NetworkVideoType.Hls,
+            danmakus = emptyList(),
+            chapters = listOf(
+                NetworkChapter("episode-1", null, "Episode 1", null),
+                NetworkChapter("episode-2", null, "Episode 2", null),
+            ),
+            selectedChapterIndex = 0,
+        )
+
+        val failed = repository.resolveVideoChapter(
+            session = session(),
+            source = current,
+            chapterIndex = 1,
+            preferredDefinition = TranscodeResolution.P1080,
+        )
+
+        assertTrue((failed as AppResult.Failure).error is AppError.InvalidData)
+        assertEquals(1, server.requestCount)
+        val body = json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals(JsonPrimitive("series-1"), body["id"])
+        assertEquals(JsonPrimitive("episode-2"), body["chapter_id"])
+    }
+
+    @Test
     fun `video details use catalog video type when response omits it`() = runTest {
         server.enqueue(
             response(
@@ -218,6 +309,103 @@ class DefaultNetworkResourceRepositoryTest {
     }
 
     @Test
+    fun `video details retain catalog resource id when response identifies a chapter`() = runTest {
+        server.enqueue(
+            response(
+                """
+                {"status":200,"message":"","data":{
+                  "id":"episode-1","title":"Episode 1","media_type":"video",
+                  "video_type":"hls","url":"https://cdn.example/episode-1.m3u8",
+                  "chapters":[
+                    {"id":"episode-1","title":"Episode 1"},
+                    {"id":"episode-2","title":"Episode 2"}
+                  ]
+                }}
+                """.trimIndent(),
+            ),
+        )
+
+        val resolved = repository.resolveResource(
+            session = session(),
+            indexerId = 11,
+            result = result("series-1", NetworkMediaType.Video),
+            preferredDefinition = TranscodeResolution.P1080,
+        )
+
+        val source = ((resolved as AppResult.Success).value as ResolvedNetworkResource.Video).source
+        assertEquals("series-1", source.resourceId)
+        assertEquals("https://cdn.example/episode-1.m3u8", source.url)
+        assertEquals(listOf("episode-1", "episode-2"), source.chapters.map { it.id })
+        assertEquals(0, source.selectedChapterIndex)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `resolved later chapter starts adjacent navigation from that chapter`() = runTest {
+        server.enqueue(
+            response(
+                """
+                {"status":200,"message":"","data":{
+                  "id":"episode-2","title":"Episode 2","media_type":"video",
+                  "video_type":"hls","url":"https://cdn.example/episode-2.m3u8",
+                  "chapters":[
+                    {"id":"episode-1","title":"Episode 1"},
+                    {"id":"episode-2","title":"Episode 2"},
+                    {"id":"episode-3","title":"Episode 3"}
+                  ]
+                }}
+                """.trimIndent(),
+            ),
+        )
+        val resolved = repository.resolveResource(
+            session = session(),
+            indexerId = 11,
+            result = result("series-1", NetworkMediaType.Video),
+            preferredDefinition = TranscodeResolution.P1080,
+        )
+        val source = ((resolved as AppResult.Success).value as ResolvedNetworkResource.Video).source
+        val request = PlaybackRequest.NetworkVideo(
+            requestId = "request-1",
+            serverId = session().server.id,
+            title = source.title,
+            source = source,
+        )
+
+        assertEquals("series-1", source.resourceId)
+        assertTrue(PlaybackRequestNavigator.hasPrevious(request))
+        assertEquals(0, PlaybackRequestNavigator.adjacentNetworkChapter(request, -1))
+        assertEquals(null, PlaybackRequestNavigator.selectNetworkEpisode(request, 1))
+        val nextIndex = PlaybackRequestNavigator.adjacentNetworkChapter(request, 1)
+        assertEquals(2, nextIndex)
+        server.takeRequest()
+        server.enqueue(
+            response(
+                """
+                {"status":200,"message":"","data":{
+                  "id":"episode-3","title":"Episode 3","media_type":"video",
+                  "video_type":"hls","url":"https://cdn.example/episode-3.m3u8"
+                }}
+                """.trimIndent(),
+            ),
+        )
+
+        val nextResult = repository.resolveVideoChapter(
+            session = session(),
+            source = source,
+            chapterIndex = checkNotNull(nextIndex),
+            preferredDefinition = TranscodeResolution.P1080,
+        )
+
+        val next = (nextResult as AppResult.Success).value
+        val body = json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals(JsonPrimitive("series-1"), body["id"])
+        assertEquals(JsonPrimitive("episode-3"), body["chapter_id"])
+        assertEquals("https://cdn.example/episode-3.m3u8", next.url)
+        assertFalse(PlaybackRequestNavigator.hasNext(request.copy(source = next)))
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
     fun `details re-resolves first id-only chapter`() = runTest {
         server.enqueue(
             response(
@@ -230,7 +418,7 @@ class DefaultNetworkResourceRepositoryTest {
         server.enqueue(
             response(
                 """{"status":200,"message":"","data":{""" +
-                    """"id":"series-1","title":"Episode 1","media_type":"video",""" +
+                    """"id":"episode-1","title":"Episode 1","media_type":"video",""" +
                     """"video_type":"dash","url":"https://cdn.example/episode-1.mpd"}}""",
             ),
         )
@@ -247,11 +435,13 @@ class DefaultNetworkResourceRepositoryTest {
         )
 
         val source = ((resolved as AppResult.Success).value as ResolvedNetworkResource.Video).source
+        assertEquals("series-1", source.resourceId)
         assertEquals("https://cdn.example/episode-1.mpd", source.url)
         assertEquals(0, source.selectedChapterIndex)
         server.takeRequest()
-        val chapterRequest = server.takeRequest()
-        assertTrue(chapterRequest.body.readUtf8().contains(""""chapter_id":"episode-1""""))
+        val chapterBody = json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertEquals(JsonPrimitive("series-1"), chapterBody["id"])
+        assertEquals(JsonPrimitive("episode-1"), chapterBody["chapter_id"])
     }
 
     @Test
@@ -353,6 +543,55 @@ class DefaultNetworkResourceRepositoryTest {
     }
 
     @Test
+    fun `video chapter switches keep resource id across forward and backward requests`() = runTest {
+        val chapters = (1..3).map { episode ->
+            NetworkChapter("episode-$episode", null, "Episode $episode", null)
+        }
+        var source = NetworkPlaybackSource(
+            indexerId = 11,
+            resourceId = "series-1",
+            title = "Episode 1",
+            url = "https://cdn.example/episode-1.m3u8",
+            videoType = NetworkVideoType.Hls,
+            danmakus = emptyList(),
+            chapters = chapters,
+            selectedChapterIndex = 0,
+        )
+
+        for (chapterIndex in listOf(1, 2, 0)) {
+            val chapter = chapters[chapterIndex]
+            val playbackUrl = "https://cdn.example/${chapter.id}.m3u8"
+            server.enqueue(
+                response(
+                    """
+                    {"status":200,"message":"","data":{
+                      "id":"${chapter.id}","title":"${chapter.title}","media_type":"video",
+                      "video_type":"hls","url":"$playbackUrl"
+                    }}
+                    """.trimIndent(),
+                ),
+            )
+
+            val resolved = repository.resolveVideoChapter(
+                session = session(),
+                source = source,
+                chapterIndex = chapterIndex,
+                preferredDefinition = TranscodeResolution.P1080,
+            )
+
+            source = (resolved as AppResult.Success).value
+            val body = json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+            assertEquals(JsonPrimitive("series-1"), body["id"])
+            assertEquals(JsonPrimitive(chapter.id), body["chapter_id"])
+            assertEquals(playbackUrl, source.url)
+            assertEquals(chapterIndex, source.selectedChapterIndex)
+            assertEquals(chapters, source.chapters)
+        }
+        assertEquals("series-1", source.resourceId)
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test
     fun `direct chapter does not retain previous episode definitions or danmakus`() = runTest {
         val current = NetworkPlaybackSource(
             indexerId = 11,
@@ -396,9 +635,11 @@ class DefaultNetworkResourceRepositoryTest {
         )
 
         val next = (result as AppResult.Success).value
+        assertEquals("series-1", next.resourceId)
         assertTrue(next.definitions.isEmpty())
         assertTrue(next.danmakus.isEmpty())
         assertEquals(1, next.selectedChapterIndex)
+        assertEquals(0, server.requestCount)
     }
 
     @Test

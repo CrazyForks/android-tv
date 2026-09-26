@@ -1,6 +1,7 @@
 package org.kaloscope.tv.data.search
 
 import kotlin.math.roundToInt
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -113,10 +114,11 @@ internal fun IndexerResourceData.toPlaybackSource(
     }
     val mappedDefinitions = definitions.orEmpty().mapNotNull { definition ->
         val definitionUrl = definition.url.trimmedOrNull()
-        val label = definition.definition
-            ?.jsonPrimitive
-            ?.contentOrNull
-            .trimmedOrNull()
+        val label = when (val value = definition.definition) {
+            null -> null
+            is JsonPrimitive -> value.contentOrNull
+            else -> throw SerializationException("Invalid network definition label")
+        }.trimmedOrNull()
         if (definitionUrl == null || label == null) {
             return@mapNotNull null
         }
@@ -133,12 +135,17 @@ internal fun IndexerResourceData.toPlaybackSource(
     )
     val mappedChapters = toChapters()
     // Definitions override the generic URL because they carry the preferred quality.
-    val sourceUrl = selectedDefinitionIndex
+    val resourceUrl = selectedDefinitionIndex
         ?.let(mappedDefinitions::get)
         ?.url
         ?: url.trimmedOrNull()
+    val sourceUrl = resourceUrl
         ?: mappedChapters.firstOrNull()?.url
         ?: return null
+    // Resolved content can identify a later episode; directory fallback still starts at the first.
+    val selectedChapterIndex = mappedChapters.indexOfFirst { it.id == resolvedId }
+        .takeIf { resourceUrl != null && it >= 0 }
+        ?: mappedChapters.indices.firstOrNull()
     return NetworkPlaybackSource(
         indexerId = indexerId,
         resourceId = resolvedId,
@@ -162,7 +169,7 @@ internal fun IndexerResourceData.toPlaybackSource(
         definitions = mappedDefinitions,
         chapters = mappedChapters,
         selectedDefinitionIndex = selectedDefinitionIndex,
-        selectedChapterIndex = mappedChapters.indices.firstOrNull(),
+        selectedChapterIndex = selectedChapterIndex,
     )
 }
 

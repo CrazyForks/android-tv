@@ -56,12 +56,14 @@ internal fun MediaDetailUiState.hasUnauthorized(): Boolean =
     }
 
 internal fun PlayerUiState.hasUnauthorized(): Boolean =
-    this is PlayerUiState.Content &&
-        (
+    when (this) {
+        is PlayerUiState.Loading -> progressError == AppError.Unauthorized
+        is PlayerUiState.Content ->
             progressError == AppError.Unauthorized ||
                 switchError == AppError.Unauthorized ||
                 extraFailures.values.any { it == AppError.Unauthorized }
-        )
+        PlayerUiState.MissingRequest -> false
+    }
 
 internal fun ReaderUiState.hasUnauthorized(): Boolean =
     when (this) {

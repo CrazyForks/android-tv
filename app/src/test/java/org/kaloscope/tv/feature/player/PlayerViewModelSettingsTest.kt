@@ -5,6 +5,7 @@ import androidx.media3.common.Player
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -504,6 +505,85 @@ class PlayerViewModelSettingsTest {
             assertEquals(1, savedCallbacks)
             assertEquals(listOf(10L, 30L, 50L), historyRepository.recordedPositions)
         } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `late exit progress authorization failure survives a new player preparation`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val store = PlaybackRequestStore()
+        val pendingSave = CompletableDeferred<AppResult<Unit>>()
+        val historyRepository = RecordingHistoryRepository().apply {
+            deferredResult = pendingSave
+        }
+        val mediaRepository = QueuedExtrasRepository()
+        val viewModel = PlayerViewModel(
+            requestStore = store,
+            mediaRepository = mediaRepository,
+            historyRepository = historyRepository,
+            networkResourceRepository = unusedNetworkResourceRepository(),
+        )
+        try {
+            val oldId = checkNotNull(viewModel.createFromHistory(session(), history()))
+            viewModel.load(session(), oldId)
+            runCurrent()
+            val oldRequest = (viewModel.uiState.value as PlayerUiState.Content).request
+            viewModel.recordProgress(
+                session = session(),
+                request = oldRequest,
+                positionMillis = 20_000,
+                durationMillis = 60_000,
+                reason = ProgressReason.Exit,
+                nowMillis = 20_000,
+            )
+            runCurrent()
+            assertEquals(listOf(20L), historyRepository.recordedPositions)
+            viewModel.close(oldId)
+
+            mediaRepository.suspendRetries = true
+            val newId = checkNotNull(
+                viewModel.createFromHistory(
+                    session(),
+                    history().copy(mediaId = 302, path = "/episode-2.mkv"),
+                ),
+            )
+            viewModel.load(session(), newId)
+            runCurrent()
+            assertEquals(PlayerUiState.Loading(), viewModel.uiState.value)
+
+            pendingSave.complete(AppResult.Failure(AppError.Unauthorized))
+            runCurrent()
+
+            assertTrue(viewModel.uiState.value.hasUnauthorized())
+            assertEquals(
+                PlaybackPreparationStage.Resource,
+                (viewModel.uiState.value as PlayerUiState.Loading).stage,
+            )
+            mediaRepository.completeRetry(PlayerExtra.Subtitles)
+            runCurrent()
+            assertEquals(
+                PlaybackPreparationStage.Danmaku,
+                (viewModel.uiState.value as PlayerUiState.Loading).stage,
+            )
+            assertTrue(viewModel.uiState.value.hasUnauthorized())
+
+            mediaRepository.completeRetry(PlayerExtra.Danmakus)
+            runCurrent()
+            val content = viewModel.uiState.value as PlayerUiState.Content
+            assertEquals(newId, content.request.requestId)
+            assertEquals(AppError.Unauthorized, content.progressError)
+            assertTrue(content.hasUnauthorized())
+            assertNull(store.get(oldId))
+
+            viewModel.clearServer(session().server.id)
+            assertEquals(PlayerUiState.Loading(), viewModel.uiState.value)
+            assertFalse(viewModel.uiState.value.hasUnauthorized())
+            assertNull(store.get(newId))
+        } finally {
+            viewModel.viewModelScope.cancel()
+            runCurrent()
             Dispatchers.resetMain()
         }
     }
@@ -1319,6 +1399,7 @@ private class RecordingHistoryRepository : HistoryRepository {
     var positionSeconds: Long? = null
     var percentage: Int? = null
     var result: AppResult<Unit> = AppResult.Success(Unit)
+    var deferredResult: CompletableDeferred<AppResult<Unit>>? = null
     val recordedPositions = mutableListOf<Long>()
 
     override suspend fun getRecentVideos(
@@ -1334,7 +1415,7 @@ private class RecordingHistoryRepository : HistoryRepository {
         this.positionSeconds = positionSeconds
         this.percentage = percentage
         recordedPositions += positionSeconds
-        return result
+        return deferredResult?.await() ?: result
     }
 }
 

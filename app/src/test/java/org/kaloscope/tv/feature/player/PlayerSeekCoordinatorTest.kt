@@ -111,6 +111,105 @@ class PlayerSeekCoordinatorTest {
     }
 
     @Test
+    fun `clamped seek is acknowledged at the actual stream end`() = runTest {
+        val actualDurationMillis = 55_000L
+        val submittedTargets = mutableListOf<Long>()
+        lateinit var coordinator: PlayerSeekCoordinator
+        coordinator = PlayerSeekCoordinator(
+            scope = this,
+            onSeek = { positionMillis ->
+                // The stream duration can replace a longer probe duration before submission.
+                val actualTarget = positionMillis.coerceAtMost(actualDurationMillis)
+                submittedTargets += actualTarget
+                coordinator.reportPlayerPosition(actualTarget, actualDurationMillis)
+            },
+        )
+        coordinator.reportPlayerPosition(50_000L)
+        coordinator.stepBy(durationMillis = 60_000L, offsetMillis = 10_000L)
+        advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+        runCurrent()
+
+        assertEquals(listOf(55_000L), submittedTargets)
+        assertFalse(coordinator.state.value.seekPending)
+        assertEquals(55_000L, coordinator.state.value.displayPositionMillis)
+
+        coordinator.adjustBy(durationMillis = actualDurationMillis, offsetMillis = -10_000L)
+        assertEquals(45_000L, coordinator.state.value.displayPositionMillis)
+    }
+
+    @Test
+    fun `shorter duration bounds a preview before submission`() = runTest {
+        val submittedTargets = mutableListOf<Long>()
+        val coordinator = PlayerSeekCoordinator(
+            scope = this,
+            onSeek = submittedTargets::add,
+        )
+        coordinator.reportPlayerPosition(50_000L)
+        coordinator.adjustBy(durationMillis = 60_000L, offsetMillis = 10_000L)
+
+        coordinator.reportPlayerPosition(50_000L, durationMillis = 55_000L)
+
+        assertEquals(55_000L, coordinator.state.value.displayPositionMillis)
+        assertFalse(coordinator.state.value.seekPending)
+        assertTrue(submittedTargets.isEmpty())
+
+        coordinator.release()
+        advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+        runCurrent()
+        assertEquals(listOf(55_000L), submittedTargets)
+    }
+
+    @Test
+    fun `shorter duration does not acknowledge an old position sample`() = runTest {
+        val submittedTargets = mutableListOf<Long>()
+        val coordinator = PlayerSeekCoordinator(
+            scope = this,
+            onSeek = submittedTargets::add,
+        )
+        coordinator.reportPlayerPosition(45_000L)
+        coordinator.stepBy(durationMillis = 60_000L, offsetMillis = 20_000L)
+        advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+        runCurrent()
+
+        coordinator.reportPlayerPosition(45_000L, durationMillis = 55_000L)
+
+        assertEquals(listOf(60_000L), submittedTargets)
+        assertEquals(55_000L, coordinator.state.value.displayPositionMillis)
+        assertTrue(coordinator.state.value.seekPending)
+
+        coordinator.reportPlayerPosition(55_000L, durationMillis = 55_000L)
+        assertFalse(coordinator.state.value.seekPending)
+        assertEquals(55_000L, coordinator.state.value.displayPositionMillis)
+        assertEquals(listOf(60_000L), submittedTargets)
+    }
+
+    @Test
+    fun `unknown duration preserves preview and pending targets`() = runTest {
+        for (durationMillis in listOf(0L, -1L)) {
+            val submittedTargets = mutableListOf<Long>()
+            val coordinator = PlayerSeekCoordinator(
+                scope = this,
+                onSeek = submittedTargets::add,
+            )
+            coordinator.reportPlayerPosition(50_000L)
+            coordinator.stepBy(durationMillis = 60_000L, offsetMillis = 10_000L)
+
+            coordinator.reportPlayerPosition(50_000L, durationMillis)
+            assertEquals(60_000L, coordinator.state.value.displayPositionMillis)
+
+            advanceTimeBy(PlayerSeekCoordinator.SETTLE_DELAY_MILLIS)
+            runCurrent()
+            coordinator.reportPlayerPosition(50_000L, durationMillis)
+            assertEquals(listOf(60_000L), submittedTargets)
+            assertEquals(60_000L, coordinator.state.value.displayPositionMillis)
+            assertTrue(coordinator.state.value.seekPending)
+
+            coordinator.reportPlayerPosition(60_000L, durationMillis)
+            assertFalse(coordinator.state.value.seekPending)
+        }
+    }
+
+    @Test
     fun `preview clamps to duration and ignores unknown duration`() = runTest {
         val coordinator = PlayerSeekCoordinator(
             scope = this,

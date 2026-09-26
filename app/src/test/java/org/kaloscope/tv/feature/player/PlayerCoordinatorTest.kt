@@ -180,6 +180,71 @@ class PlayerCoordinatorTest {
     }
 
     @Test
+    fun `later progress results cannot clear authorization failure during preparation`() = runTest {
+        val request = request()
+        val store = PlaybackRequestStore().apply { put(request) }
+        val subtitles = CompletableDeferred<AppResult<List<SubtitleTrack>>>()
+        val coordinator = PlayerCoordinator(
+            store,
+            FakeMediaRepository(deferredSubtitles = subtitles),
+        )
+        val loadJob = launch { coordinator.load(session(), request.requestId) }
+        try {
+            runCurrent()
+            coordinator.reportProgressFailure(302L, AppError.Unauthorized)
+            val unauthorized = coordinator.state.value
+            assertTrue(unauthorized.hasUnauthorized())
+
+            for (mediaId in listOf(request.mediaId, 302L)) {
+                for (error in listOf(AppError.Offline, AppError.Timeout, AppError.Forbidden)) {
+                    coordinator.reportProgressFailure(mediaId, error)
+                    assertEquals(unauthorized, coordinator.state.value)
+                    coordinator.reportProgressSaved(mediaId)
+                    assertEquals(unauthorized, coordinator.state.value)
+                }
+            }
+
+            subtitles.complete(AppResult.Success(emptyList()))
+            loadJob.join()
+            assertEquals(
+                AppError.Unauthorized,
+                (coordinator.state.value as PlayerUiState.Content).progressError,
+            )
+            coordinator.reportProgressSaved(302L)
+            assertTrue(coordinator.state.value.hasUnauthorized())
+        } finally {
+            loadJob.cancel()
+        }
+    }
+
+    @Test
+    fun `ordinary progress failures during preparation remain ignored`() = runTest {
+        val request = request()
+        val store = PlaybackRequestStore().apply { put(request) }
+        val subtitles = CompletableDeferred<AppResult<List<SubtitleTrack>>>()
+        val coordinator = PlayerCoordinator(
+            store,
+            FakeMediaRepository(deferredSubtitles = subtitles),
+        )
+        val loadJob = launch { coordinator.load(session(), request.requestId) }
+        try {
+            runCurrent()
+            for (error in listOf(AppError.Offline, AppError.Timeout, AppError.Forbidden)) {
+                coordinator.reportProgressFailure(302L, error)
+                assertEquals(PlayerUiState.Loading(), coordinator.state.value)
+            }
+
+            subtitles.complete(AppResult.Success(emptyList()))
+            loadJob.join()
+            val content = coordinator.state.value as PlayerUiState.Content
+            assertEquals(request, content.request)
+            assertNull(content.progressError)
+        } finally {
+            loadJob.cancel()
+        }
+    }
+
+    @Test
     fun `progress failure keeps playback content available`() = runTest {
         val store = PlaybackRequestStore()
         val request = request()
