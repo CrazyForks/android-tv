@@ -1,5 +1,6 @@
 package org.kaloscope.tv.core.network
 
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -84,6 +85,73 @@ class ServerImageResolverTest {
     }
 
     @Test
+    fun `direct protocol relative images inherit only the server scheme`() {
+        val raw = "//covers.example:9443/a%20b.webp?signature=a%2Fb%2Bc"
+        for (scheme in listOf("http", "https")) {
+            val request = ServerImageResolver.resolve(
+                session = session("$scheme://media.example:8443"),
+                rawValue = raw,
+                policy = ServerImagePolicy.Direct,
+            )
+
+            checkNotNull(request)
+            assertEquals("$scheme:$raw", request.url)
+            assertNull(request.authorization)
+        }
+    }
+
+    @Test
+    fun `protocol relative images preserve proxy and storage policies`() {
+        val cases = listOf(
+            Triple(ServerImagePolicy.Auto, "", false),
+            Triple(ServerImagePolicy.Auto, "&proxy=true", false),
+            Triple(ServerImagePolicy.Auto, "&proxy=store", true),
+            Triple(ServerImagePolicy.Proxy, "&proxy=store", false),
+            Triple(ServerImagePolicy.Store, "", true),
+            Triple(ServerImagePolicy.Store, "&proxy=false", true),
+        )
+        for (scheme in listOf("http", "https")) {
+            val origin = "$scheme://media.example:8443"
+            for ((policy, marker, store) in cases) {
+                val raw = "//covers.example:9443/a%20b.webp?signature=a%2Fb%2Bc$marker"
+                val request = ServerImageResolver.resolve(session(origin), raw, policy)
+
+                checkNotNull(request)
+                val url = request.url.toHttpUrl()
+                assertEquals(
+                    "$origin/_api/image/proxy",
+                    url.newBuilder().query(null).build().toString(),
+                )
+                assertEquals(setOf("store", "url"), url.queryParameterNames)
+                assertEquals(store.toString(), url.queryParameter("store"))
+                assertEquals("$scheme:$raw", url.queryParameter("url"))
+                assertEquals("Token token-one", request.authorization)
+            }
+        }
+    }
+
+    @Test
+    fun `direct protocol relative images keep tokens bound to the resolved origin`() {
+        val expectedAuthorization = mapOf(
+            "media.example:8443" to "Token token-one",
+            "media.example" to null,
+            "media.example:9443" to null,
+            "covers.example:8443" to null,
+        )
+        for ((authority, authorization) in expectedAuthorization) {
+            val request = ServerImageResolver.resolve(
+                session = session("https://media.example:8443"),
+                rawValue = "//$authority/a.webp",
+                policy = ServerImagePolicy.Direct,
+            )
+
+            checkNotNull(request)
+            assertEquals("https://$authority/a.webp", request.url)
+            assertEquals(authorization, request.authorization)
+        }
+    }
+
+    @Test
     fun `proxy policy routes remote image without server storage`() {
         val request = ServerImageResolver.resolve(
             session = session(),
@@ -138,8 +206,8 @@ class ServerImageResolverTest {
         assertNull(ServerImageResolver.resolve(session(), "  "))
     }
 
-    private fun session() = Session(
-        server = SavedServer("server-one", "家庭服务器", "https://media.example"),
+    private fun session(origin: String = "https://media.example") = Session(
+        server = SavedServer("server-one", "家庭服务器", origin),
         token = "token-one",
         user = SessionUser(1, "tv_user", "user"),
     )

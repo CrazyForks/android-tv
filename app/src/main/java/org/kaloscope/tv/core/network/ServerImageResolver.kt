@@ -22,8 +22,15 @@ object ServerImageResolver {
         rawValue: String?,
         policy: ServerImagePolicy = ServerImagePolicy.Auto,
     ): ServerImageRequest? {
-        val raw = rawValue.trimmedOrNull() ?: return null
+        val value = rawValue.trimmedOrNull() ?: return null
         val serverOrigin = session.server.origin.removeSuffix("/")
+        // The proxy requires an absolute URL even when the remote host omits its scheme.
+        val raw = if (value.startsWith("//")) {
+            val scheme = serverOrigin.toHttpUrlOrNull()?.scheme ?: return null
+            "$scheme:$value"
+        } else {
+            value
+        }
         val absolute = raw.toHttpUrlOrNull()
         val resolvedUrl = when {
             absolute == null -> if (raw.startsWith("/")) {
