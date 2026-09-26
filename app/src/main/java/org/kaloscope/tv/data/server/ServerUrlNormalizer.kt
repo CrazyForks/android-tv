@@ -51,8 +51,8 @@ object ServerUrlNormalizer {
             throw InvalidServerUrl(ServerUrlError.PathNotAllowed)
         }
 
-        // URI.host omits the brackets required when serializing an IPv6 origin.
-        val host = if (uri.host.contains(':')) "[${uri.host}]" else uri.host
+        // URI.host already includes the brackets required for an IPv6 origin.
+        val host = uri.host
         val port = if (uri.port == -1) "" else ":${uri.port}"
         return "$scheme://${host.lowercase()}$port"
     }

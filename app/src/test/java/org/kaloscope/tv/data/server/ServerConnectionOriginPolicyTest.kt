@@ -18,6 +18,32 @@ class ServerConnectionOriginPolicyTest {
     }
 
     @Test
+    fun `normalized IPv6 origin supports connection checks and same host upgrades`() {
+        val origin = ServerUrlNormalizer.normalize(" http://[2001:DB8::1]:8000/ ")
+
+        assertEquals(
+            origin,
+            ServerConnectionOriginPolicy.resolve(
+                requestedOrigin = origin,
+                finalUrl = "$origin/_api/system/version".toHttpUrl(),
+            ),
+        )
+        assertEquals(
+            "https://[2001:db8::1]:8443",
+            ServerConnectionOriginPolicy.resolve(
+                requestedOrigin = origin,
+                finalUrl = "https://[2001:db8::1]:8443/_api/system/version".toHttpUrl(),
+            ),
+        )
+        assertNull(
+            ServerConnectionOriginPolicy.resolve(
+                requestedOrigin = origin,
+                finalUrl = "https://[2001:db8::2]:8443/_api/system/version".toHttpUrl(),
+            ),
+        )
+    }
+
+    @Test
     fun `accepts an http to https upgrade on the same host`() {
         assertEquals(
             "https://demo.example:8443",

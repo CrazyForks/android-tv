@@ -124,6 +124,29 @@ class ServerSetupCoordinatorTest {
     }
 
     @Test
+    fun `IPv6 connection fills a blank name and saves the verified origin`() = runBlocking {
+        val repository = FakeServerRepository(testResult = AppResult.Success("0.5.3"))
+        val coordinator = coordinator(repository)
+        coordinator.updateUrl(" HTTP://[2001:DB8::1]:8000/ ")
+
+        coordinator.testConnection()
+
+        val origin = "http://[2001:db8::1]:8000"
+        assertEquals(1, repository.testCalls)
+        assertEquals("2001:db8::1", coordinator.state.value.name)
+        assertEquals(origin, coordinator.state.value.url)
+        assertEquals(origin, coordinator.state.value.verifiedOrigin)
+        assertNull(coordinator.state.value.error)
+        assertTrue(coordinator.state.value.canSave)
+
+        val saved = coordinator.save()
+
+        assertEquals(SavedServer("generated-id", "2001:db8::1", origin), saved)
+        assertEquals(saved, repository.savedServer)
+        assertEquals("generated-id", repository.activeServerId)
+    }
+
+    @Test
     fun `editing url after testing invalidates connection proof`() = runBlocking {
         val coordinator = coordinator(FakeServerRepository())
         coordinator.updateName("家庭服务器")
