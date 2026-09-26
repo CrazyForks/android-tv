@@ -369,6 +369,30 @@ class ReaderCoordinatorTest {
     }
 
     @Test
+    fun `empty final image page clears retry error and stops loading without replacing content`() = runTest {
+        val store = ReaderRequestStore().apply { put(imageRequest(imageCount = 5)) }
+        val loader = FakeReaderContentLoader(
+            pageResults = ArrayDeque(
+                listOf(
+                    AppResult.Failure(AppError.Offline),
+                    AppResult.Success(ReaderImagePage(emptyList(), 5, exhausted = true)),
+                ),
+            ),
+        )
+        val coordinator = ReaderCoordinator(store, loader)
+        coordinator.load("reader-1", session())
+        val original = coordinator.state.value as ReaderUiState.Image
+
+        coordinator.loadMoreImages(session())
+        assertEquals(original.copy(pageError = AppError.Offline), coordinator.state.value)
+        coordinator.loadMoreImages(session())
+
+        assertEquals(original.copy(imagesExhausted = true), coordinator.state.value)
+        coordinator.loadMoreImages(session())
+        assertEquals(2, loader.pageRequests.size)
+    }
+
+    @Test
     fun `cancelled pagination drops queued errors and clears loading without replacing content`() = runTest {
         val response = PendingNetworkResponse<ReaderImagePage>()
         val loader = object : ReaderContentLoader by FakeReaderContentLoader() {

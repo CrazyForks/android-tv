@@ -780,6 +780,136 @@ class DefaultNetworkResourceRepositoryTest {
     }
 
     @Test
+    fun `null resource details remain invalid for initial resolution`() = runTest {
+        for (type in listOf(NetworkMediaType.Video, NetworkMediaType.Image, NetworkMediaType.Text)) {
+            server.enqueue(response("""{"status":200,"message":"","data":null}"""))
+
+            val resolved = repository.resolveResource(
+                session = session(),
+                indexerId = 11,
+                result = result("resource-1", type),
+                preferredDefinition = TranscodeResolution.P1080,
+            )
+
+            assertTrue("type=$type", (resolved as AppResult.Failure).error is AppError.InvalidData)
+        }
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test
+    fun `null first chapter details remain invalid for every media type`() = runTest {
+        for (type in listOf(NetworkMediaType.Video, NetworkMediaType.Image, NetworkMediaType.Text)) {
+            server.enqueue(
+                response(
+                    """
+                    {"status":200,"message":"","data":{
+                      "id":"resource-1","media_type":"${type.name.lowercase()}",
+                      "chapters":[{"id":"c1","title":"Chapter One"}]
+                    }}
+                    """.trimIndent(),
+                ),
+            )
+            server.enqueue(response("""{"status":200,"message":"","data":null}"""))
+
+            val resolved = repository.resolveResource(
+                session = session(),
+                indexerId = 11,
+                result = result("resource-1", type),
+                preferredDefinition = TranscodeResolution.P1080,
+            )
+
+            assertTrue("type=$type", (resolved as AppResult.Failure).error is AppError.InvalidData)
+        }
+        assertEquals(6, server.requestCount)
+    }
+
+    @Test
+    fun `null chapter details remain invalid when switching video or reader content`() = runTest {
+        val chapters = listOf(
+            ReaderChapter("c1", "Chapter One"),
+            ReaderChapter("c2", "Chapter Two"),
+        )
+        val readerContents = listOf(
+            ReaderImageContent.network(
+                indexerId = 11,
+                resourceId = "resource-1",
+                chapterId = "c1",
+                title = "Comic",
+                images = listOf("one.jpg"),
+                imageCount = 1,
+                chapters = chapters,
+                selectedChapterIndex = 0,
+            ),
+            ReaderTextContent.network(
+                indexerId = 11,
+                resourceId = "resource-1",
+                chapterId = "c1",
+                title = "Book",
+                text = "Chapter One",
+                chapters = chapters,
+                selectedChapterIndex = 0,
+            ),
+        )
+        for (content in readerContents) {
+            server.enqueue(response("""{"status":200,"message":"","data":null}"""))
+
+            val resolved = repository.resolveReaderChapter(session(), content, 1)
+
+            assertTrue((resolved as AppResult.Failure).error is AppError.InvalidData)
+        }
+        val video = NetworkPlaybackSource(
+            indexerId = 11,
+            resourceId = "resource-1",
+            title = "Chapter One",
+            url = "https://cdn.example/one.m3u8",
+            videoType = NetworkVideoType.Hls,
+            danmakus = emptyList(),
+            chapters = chapters.map { NetworkChapter(it.id, null, it.title, it.volume) },
+            selectedChapterIndex = 0,
+        )
+        server.enqueue(response("""{"status":200,"message":"","data":null}"""))
+
+        val resolved = repository.resolveVideoChapter(session(), video, 1, TranscodeResolution.P1080)
+
+        assertTrue((resolved as AppResult.Failure).error is AppError.InvalidData)
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test
+    fun `empty image page responses mark exhaustion only for successful envelopes`() = runTest {
+        val current = ReaderImageContent.network(
+            indexerId = 11,
+            resourceId = "comic-1",
+            chapterId = "c1",
+            title = "Comic",
+            images = listOf("one.jpg", "two.jpg"),
+            imageCount = 5,
+            chapters = listOf(ReaderChapter("c1", "Chapter One")),
+            selectedChapterIndex = 0,
+        )
+        for (data in listOf("null", "{}", """{"images":null}""", """{"images":[]}""")) {
+            server.enqueue(response("""{"status":200,"message":"","data":$data}"""))
+
+            val result = repository.loadImagePage(session(), current)
+
+            val page = (result as AppResult.Success).value
+            assertTrue("data=$data", page.images.isEmpty())
+            assertEquals(5, page.imageCount)
+            assertTrue("data=$data", page.exhausted)
+            val body = json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+            assertEquals(JsonPrimitive("comic-1"), body["id"])
+            assertEquals(JsonPrimitive("c1"), body["chapter_id"])
+            assertEquals(JsonPrimitive(3), body["page"])
+        }
+        server.enqueue(response("""{"status":500,"message":"fixture-error","data":null}"""))
+
+        val failed = repository.loadImagePage(session(), current)
+
+        assertTrue((failed as AppResult.Failure).error is AppError.InvalidData)
+        assertEquals(5, server.requestCount)
+    }
+
+    @Test
     fun `image page starts after loaded count deduplicates and detects exhaustion`() = runTest {
         server.enqueue(
             response(

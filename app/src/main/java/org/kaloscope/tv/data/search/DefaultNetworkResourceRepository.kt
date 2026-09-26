@@ -47,7 +47,7 @@ class DefaultNetworkResourceRepository @Inject constructor(
                 session = session,
                 indexerId = indexerId,
                 resourceId = result.id,
-            )
+            ) ?: throw SerializationException("Missing network details")
             val mediaType = resource.resolveMediaType(result.mediaType)
             when (mediaType) {
                 NetworkMediaType.Audio ->
@@ -113,7 +113,7 @@ class DefaultNetworkResourceRepository @Inject constructor(
                 indexerId = source.indexerId,
                 resourceId = source.resourceId,
                 chapterId = chapterId,
-            ).toPlaybackSource(
+            )?.toPlaybackSource(
                 indexerId = source.indexerId,
                 fallbackTitle = chapter.title,
                 preferredDefinition = preferredDefinition,
@@ -143,7 +143,7 @@ class DefaultNetworkResourceRepository @Inject constructor(
                 indexerId = source.indexerId,
                 resourceId = source.resourceId,
                 chapterId = chapter.id,
-            )
+            ) ?: throw SerializationException("Missing network details")
             when (content) {
                 is ReaderImageContent -> resource.toImageContent(
                     source = source.copy(chapterId = chapter.id),
@@ -176,11 +176,12 @@ class DefaultNetworkResourceRepository @Inject constructor(
                 page = content.images.size + 1,
             )
             val knownImages = content.images.toHashSet()
-            val appended = resource.images.orEmpty()
+            // A null details payload is a valid end-of-pages response for image pagination.
+            val appended = resource?.images.orEmpty()
                 .mapNotNull { it.trimmedOrNull() }
                 .distinct()
                 .filterNot(knownImages::contains)
-            val imageCount = resource.imageCount
+            val imageCount = resource?.imageCount
                 ?.takeIf { it > 0 }
                 ?: content.imageCount
             ReaderImagePage(
@@ -217,7 +218,7 @@ class DefaultNetworkResourceRepository @Inject constructor(
                 indexerId = indexerId,
                 resourceId = resourceId,
                 chapterId = chapterId,
-            ).toPlaybackSource(
+            )?.toPlaybackSource(
                 indexerId = indexerId,
                 fallbackTitle = chapter.title,
                 preferredDefinition = preferredDefinition,
@@ -253,7 +254,7 @@ class DefaultNetworkResourceRepository @Inject constructor(
                 indexerId = indexerId,
                 resourceId = resourceId,
                 chapterId = chapter.id,
-            )
+            ) ?: throw SerializationException("Missing network details")
         }
         return contentResource.toImageContent(
             source = source,
@@ -285,7 +286,7 @@ class DefaultNetworkResourceRepository @Inject constructor(
                 indexerId = indexerId,
                 resourceId = resourceId,
                 chapterId = chapter.id,
-            )
+            ) ?: throw SerializationException("Missing network details")
         }
         return contentResource.toTextContent(
             source = source,
@@ -301,7 +302,7 @@ class DefaultNetworkResourceRepository @Inject constructor(
         resourceId: String,
         chapterId: String? = null,
         page: Int? = null,
-    ): IndexerResourceData =
+    ): IndexerResourceData? =
         apiClientFactory.create(session.server.origin).executeIndexerDetails(
             authorization = session.authorizationHeader(),
             indexerId = indexerId,
@@ -310,7 +311,7 @@ class DefaultNetworkResourceRepository @Inject constructor(
                 chapterId = chapterId?.let(::JsonPrimitive) ?: JsonNull,
                 page = page,
             ),
-        ).dataOrThrow() ?: throw SerializationException("Missing network details")
+        ).dataOrThrow()
 
     private fun IndexerResourceData.resolveMediaType(
         fallback: NetworkMediaType,
