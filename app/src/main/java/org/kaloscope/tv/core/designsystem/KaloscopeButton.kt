@@ -12,8 +12,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
@@ -66,10 +69,18 @@ internal fun rememberKaloscopeControlVisuals(
         preserveSelectionOnFocus = preserveSelectionOnFocus,
         restingContentColor = restingContentColor,
     )
-    val duration = if (pressed) {
-        KaloscopeMotion.PressMillis
-    } else {
-        KaloscopeMotion.FocusMillis
+    var wasPressed by remember { mutableStateOf(false) }
+    // Keep release timing through recompositions until the next interaction.
+    val duration = remember(enabled, focused, pressed) {
+        when {
+            !enabled || !focused -> KaloscopeMotion.ButtonBlurMillis
+            pressed -> KaloscopeMotion.ButtonPressMillis
+            wasPressed -> KaloscopeMotion.ButtonReleaseMillis
+            else -> KaloscopeMotion.ButtonFocusMillis
+        }
+    }
+    SideEffect {
+        wasPressed = state.showPressedShade
     }
     val animatedBaseColor by animateColorAsState(
         targetValue = resolveKaloscopeControlBaseColor(

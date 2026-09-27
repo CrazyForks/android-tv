@@ -249,9 +249,11 @@ class KaloscopeControlsTest {
         }
 
         composeRule.runOnIdle { restingControl.requestFocus() }
-        composeRule.mainClock.advanceTimeBy(KaloscopeMotion.FocusMillis.toLong() + 20)
+        composeRule.mainClock.advanceTimeBy(KaloscopeMotion.ButtonFocusMillis.toLong() + 20)
         composeRule.runOnIdle { transitioningControl.requestFocus() }
-        composeRule.mainClock.advanceTimeBy(KaloscopeMotion.FocusMillis.toLong() / 4)
+        // Allow focus recomposition and animation startup before sampling.
+        repeat(2) { composeRule.mainClock.advanceTimeByFrame() }
+        composeRule.mainClock.advanceTimeBy(KaloscopeMotion.ButtonFocusMillis.toLong() / 4)
 
         val control = composeRule.onNodeWithTag("transitioning-control")
             .captureToImage()
@@ -315,9 +317,11 @@ class KaloscopeControlsTest {
         }
 
         composeRule.runOnIdle { restingControl.requestFocus() }
-        composeRule.mainClock.advanceTimeBy(KaloscopeMotion.FocusMillis.toLong() + 20)
+        composeRule.mainClock.advanceTimeBy(KaloscopeMotion.ButtonFocusMillis.toLong() + 20)
         composeRule.runOnIdle { transitioningControl.requestFocus() }
-        composeRule.mainClock.advanceTimeBy(KaloscopeMotion.FocusMillis.toLong() / 4)
+        // Allow focus recomposition and animation startup before sampling.
+        repeat(2) { composeRule.mainClock.advanceTimeByFrame() }
+        composeRule.mainClock.advanceTimeBy(KaloscopeMotion.ButtonFocusMillis.toLong() / 4)
 
         val control = composeRule.onNodeWithTag("transitioning-icon-control")
             .captureToImage()
