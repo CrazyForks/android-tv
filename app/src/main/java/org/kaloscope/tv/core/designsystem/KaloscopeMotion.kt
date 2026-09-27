@@ -17,6 +17,9 @@ object KaloscopeMotion {
     const val GridCardReleaseMillis = 300
     const val SidePanelEnterMillis = 180
     const val SidePanelScrimEnterMillis = 120
+    const val ChoiceDialogEnterMillis = 160
+    const val ChoiceDialogScrimEnterMillis = 120
+    const val ChoiceDialogStartScale = 0.98f
     const val PlayerControlEnterMillis = 160
     const val PlayerControlExitMillis = 120
     const val ReaderControlEnterMillis = 160

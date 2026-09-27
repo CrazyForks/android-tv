@@ -70,6 +70,111 @@ class KaloscopeChoiceDialogTest {
     }
 
     @Test
+    fun entranceKeepsLayoutSizeAndDoesNotRestartOnRecomposition() {
+        composeRule.mainClock.autoAdvance = false
+        var title by mutableStateOf("选项")
+        composeRule.setContent {
+            KaloscopeTheme {
+                BoxWithConstraints {
+                    KaloscopeChoiceDialog(
+                        title = title,
+                        viewportSize = DpSize(maxWidth, maxHeight),
+                        options = listOf(
+                            option("自动", selected = true, tag = "animated-choice-auto"),
+                            option("直连", selected = false, tag = "animated-choice-direct"),
+                        ),
+                        onDismiss = {},
+                    )
+                }
+            }
+        }
+
+        val options = composeRule.onNodeWithTag("kaloscope-choice-dialog-options")
+        val initialNode = options.fetchSemanticsNode()
+        val initialBounds = initialNode.boundsInRoot
+        val layoutWidth = initialNode.layoutInfo.width
+        val layoutHeight = initialNode.layoutInfo.height
+
+        composeRule.mainClock.advanceTimeBy(80)
+        val enteringWidth = options.fetchSemanticsNode().boundsInRoot.width
+        composeRule.mainClock.advanceTimeBy(240)
+        val settledNode = options.fetchSemanticsNode()
+        val settledBounds = settledNode.boundsInRoot
+
+        assertEquals(settledBounds.width * 0.98f, initialBounds.width, 1f)
+        assertTrue(enteringWidth > initialBounds.width)
+        assertTrue(enteringWidth < settledBounds.width)
+        assertEquals(layoutWidth, settledNode.layoutInfo.width)
+        assertEquals(layoutHeight, settledNode.layoutInfo.height)
+        assertEquals(initialBounds.center.x, settledBounds.center.x, 1f)
+
+        composeRule.runOnIdle { title = "播放方式" }
+        composeRule.mainClock.advanceTimeByFrame()
+        assertEquals(settledBounds, options.fetchSemanticsNode().boundsInRoot)
+        composeRule.onNodeWithTag("animated-choice-auto").assertIsFocused()
+    }
+
+    @Test
+    fun backDuringEntranceDismissesImmediatelyAndAllowsReopening() {
+        composeRule.mainClock.autoAdvance = false
+        var open by mutableStateOf(true)
+        var dismissCount = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                BoxWithConstraints {
+                    if (open) {
+                        KaloscopeChoiceDialog(
+                            title = "播放方式",
+                            viewportSize = DpSize(maxWidth, maxHeight),
+                            options = listOf(
+                                option("自动", selected = true, tag = "early-choice-auto"),
+                                option("直连", selected = false, tag = "early-choice-direct"),
+                            ),
+                            onDismiss = {
+                                dismissCount += 1
+                                open = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        composeRule.mainClock.advanceTimeBy(48)
+        composeRule.onNodeWithTag("early-choice-auto")
+            .assertIsFocused()
+            .performKeyInput {
+                pressKey(Key.DirectionUp)
+                pressKey(Key.DirectionLeft)
+                pressKey(Key.DirectionRight)
+            }
+            .assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionDown) }
+        composeRule.onNodeWithTag("early-choice-direct").assertIsFocused()
+
+        InstrumentationRegistry.getInstrumentation().apply {
+            waitForIdleSync()
+            sendKeyDownUpSync(AndroidKeyEvent.KEYCODE_BACK)
+        }
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.onNodeWithTag("kaloscope-choice-dialog-panel").assertDoesNotExist()
+        composeRule.runOnIdle { assertEquals(1, dismissCount) }
+        composeRule.mainClock.advanceTimeBy(240)
+        composeRule.onNodeWithTag("kaloscope-choice-dialog-panel").assertDoesNotExist()
+
+        composeRule.runOnIdle { open = true }
+        composeRule.mainClock.advanceTimeBy(48)
+        composeRule.onNodeWithTag("early-choice-auto").assertIsFocused()
+        val enteringWidth = composeRule.onNodeWithTag("kaloscope-choice-dialog-options")
+            .fetchSemanticsNode().boundsInRoot.width
+        composeRule.mainClock.advanceTimeBy(240)
+        val settledWidth = composeRule.onNodeWithTag("kaloscope-choice-dialog-options")
+            .fetchSemanticsNode().boundsInRoot.width
+        assertTrue(enteringWidth < settledWidth)
+        composeRule.runOnIdle { assertEquals(1, dismissCount) }
+    }
+
+    @Test
     fun overflowingOptionsKeepDpadFocusVisibleInsideTheViewport() {
         composeRule.setContent {
             KaloscopeTheme {

@@ -1,5 +1,7 @@
 package org.kaloscope.tv.core.designsystem
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,16 +18,19 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -34,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.tv.material3.Text
+import kotlinx.coroutines.launch
 
 data class KaloscopeChoiceDialogOption(
     val label: String,
@@ -66,10 +72,33 @@ fun KaloscopeChoiceDialog(
         onDismissRequest = onDismiss,
         properties = KaloscopeModalPopupProperties,
     ) {
+        val panelProgress = remember { Animatable(0f) }
+        val scrimProgress = remember { Animatable(0f) }
+        // Animate drawing only so layout, initial focus, and Back do not wait for the entrance.
+        LaunchedEffect(Unit) {
+            launch {
+                scrimProgress.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(
+                        KaloscopeMotion.ChoiceDialogScrimEnterMillis,
+                        easing = KaloscopeMotion.ControlEasing,
+                    ),
+                )
+            }
+            panelProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(
+                    KaloscopeMotion.ChoiceDialogEnterMillis,
+                    easing = KaloscopeMotion.ControlEasing,
+                ),
+            )
+        }
         Box(
             modifier = Modifier
                 .size(viewportSize)
-                .background(ModalScrim)
+                .drawBehind {
+                    drawRect(ModalScrim.copy(alpha = ModalScrim.alpha * scrimProgress.value))
+                }
                 .testTag("kaloscope-choice-dialog-overlay"),
             contentAlignment = Alignment.Center,
         ) {
@@ -79,6 +108,13 @@ fun KaloscopeChoiceDialog(
                     .heightIn(
                         max = (viewportSize.height - 48.dp).coerceAtLeast(1.dp),
                     )
+                    .graphicsLayer {
+                        alpha = panelProgress.value
+                        val scale = KaloscopeMotion.ChoiceDialogStartScale +
+                            (1f - KaloscopeMotion.ChoiceDialogStartScale) * panelProgress.value
+                        scaleX = scale
+                        scaleY = scale
+                    }
                     .testTag("kaloscope-choice-dialog-panel")
                     .background(PanelElevated, RoundedCornerShape(22.dp))
                     .padding(28.dp),
