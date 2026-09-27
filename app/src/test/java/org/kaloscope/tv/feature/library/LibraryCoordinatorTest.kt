@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.kaloscope.tv.app.hasUnauthorized
 import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.GridViewportSnapshot
@@ -19,6 +20,84 @@ import org.kaloscope.tv.core.model.SessionUser
 import org.kaloscope.tv.test.StubMediaRepository
 
 class LibraryCoordinatorTest {
+    @Test
+    fun `catalog authorization failure blocks reload until reset`() = runBlocking {
+        val repository = FakeMediaRepository(
+            libraries = AppResult.Failure(AppError.Unauthorized),
+            pages = mutableListOf(AppResult.Success(page(1, total = 1))),
+        )
+        val coordinator = LibraryCoordinator(repository)
+        coordinator.load(session())
+        repository.libraries = AppResult.Success(libraries())
+
+        coordinator.load(session())
+
+        assertEquals(LibraryUiState.Error(AppError.Unauthorized), coordinator.state.value)
+        assertEquals(1, repository.libraryCalls)
+        coordinator.reset()
+        coordinator.load(session())
+        assertFalse(coordinator.state.value.hasUnauthorized())
+        assertEquals(2, repository.libraryCalls)
+        assertEquals(1, repository.pageCalls.size)
+    }
+
+    @Test
+    fun `page authorization failures block dataset actions until reset`() = runBlocking {
+        val actions: List<suspend (LibraryCoordinator) -> Unit> = listOf(
+            { it.load(session()) },
+            { it.retryContent(session()) },
+            { it.search(session()) },
+            { it.selectLibrary(session(), 22) },
+            { it.loadNext(session()) },
+        )
+        for (pagination in listOf(false, true)) {
+            for (action in actions) {
+                val pages = mutableListOf<AppResult<MediaPage>>()
+                if (pagination) pages += AppResult.Success(page(1, total = 21))
+                pages += AppResult.Failure(AppError.Unauthorized)
+                pages += AppResult.Success(page(1, total = 1))
+                val repository = FakeMediaRepository(AppResult.Success(libraries()), pages)
+                val coordinator = LibraryCoordinator(repository)
+                coordinator.load(session())
+                if (pagination) coordinator.loadNext(session())
+                val failed = coordinator.state.value
+                val pageCalls = repository.pageCalls.size
+                assertTrue(failed.hasUnauthorized())
+
+                action(coordinator)
+
+                assertEquals(failed, coordinator.state.value)
+                assertEquals(1, repository.libraryCalls)
+                assertEquals(pageCalls, repository.pageCalls.size)
+                coordinator.reset()
+                coordinator.load(session())
+                assertFalse(coordinator.state.value.hasUnauthorized())
+                assertEquals(pageCalls + 1, repository.pageCalls.size)
+            }
+        }
+    }
+
+    @Test
+    fun `forbidden first page and pagination remain retryable`() = runBlocking {
+        for (pagination in listOf(false, true)) {
+            val pages = mutableListOf<AppResult<MediaPage>>()
+            if (pagination) pages += AppResult.Success(page(1, total = 21))
+            pages += AppResult.Failure(AppError.Forbidden)
+            pages += AppResult.Success(page(if (pagination) 2 else 1, total = 1))
+            val repository = FakeMediaRepository(AppResult.Success(libraries()), pages)
+            val coordinator = LibraryCoordinator(repository)
+            coordinator.load(session())
+            if (pagination) coordinator.loadNext(session())
+
+            if (pagination) coordinator.loadNext(session()) else coordinator.retryContent(session())
+
+            val items = (coordinator.state.value as LibraryUiState.Content).items
+                as LibraryItemsState.Content
+            assertEquals(null, items.loadMoreError)
+            assertEquals(if (pagination) 3 else 2, repository.pageCalls.size)
+        }
+    }
+
     @Test
     fun `viewport is remembered for the current library dataset`() = runBlocking {
         val coordinator = LibraryCoordinator(
@@ -234,14 +313,18 @@ private data class PageCall(
 )
 
 private class FakeMediaRepository(
-    private val libraries: AppResult<List<MediaLibrary>>,
+    var libraries: AppResult<List<MediaLibrary>>,
     private val pages: MutableList<AppResult<MediaPage>> = mutableListOf(),
     private val details: AppResult<MediaDetail> = AppResult.Failure(AppError.NotFound),
 ) : StubMediaRepository() {
     val pageCalls = mutableListOf<PageCall>()
+    var libraryCalls = 0
+        private set
 
-    override suspend fun getLibraries(session: Session): AppResult<List<MediaLibrary>> =
-        libraries
+    override suspend fun getLibraries(session: Session): AppResult<List<MediaLibrary>> {
+        libraryCalls += 1
+        return libraries
+    }
 
     override suspend fun getMediaPage(
         session: Session,

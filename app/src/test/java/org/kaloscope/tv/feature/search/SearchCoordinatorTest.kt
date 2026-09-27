@@ -63,6 +63,136 @@ import retrofit2.Response
 
 class SearchCoordinatorTest {
     @Test
+    fun `catalog authorization failure blocks reload until reset`() = runTest {
+        val repository = FakeSearchRepository(
+            availableProfiles = AppResult.Failure(AppError.Unauthorized),
+        )
+        val coordinator = coordinator(repository)
+        coordinator.load(session())
+        repository.availableProfiles = AppResult.Success(listOf(profile()))
+
+        coordinator.load(session())
+
+        assertEquals(SearchUiState.Error(AppError.Unauthorized), coordinator.state.value)
+        assertEquals(1, repository.profileCalls)
+        coordinator.reset()
+        coordinator.load(session())
+        assertFalse(coordinator.state.value.hasUnauthorized())
+        assertEquals(2, repository.profileCalls)
+    }
+
+    @Test
+    fun `page authorization failures block dataset actions until reset`() = runTest {
+        for (pagination in listOf(false, true)) {
+            for (action in datasetActions()) {
+                val pages = mutableListOf<AppResult<NetworkSearchPage>>()
+                if (pagination) pages += AppResult.Success(page("v1", hasNext = true))
+                pages += AppResult.Failure(AppError.Unauthorized)
+                pages += AppResult.Success(page("recovered"))
+                val repository = FakeSearchRepository(
+                    availableProfiles = AppResult.Success(listOf(profile(), profile(22))),
+                    pages = pages,
+                )
+                val coordinator = coordinator(repository)
+                coordinator.load(session())
+                coordinator.updateQuery("video")
+                coordinator.search(session())
+                if (pagination) coordinator.loadNext(session())
+                val failed = coordinator.state.value
+                val searchCalls = repository.searchCalls.size
+                assertTrue(failed.hasUnauthorized())
+
+                action(coordinator)
+
+                assertEquals(failed, coordinator.state.value)
+                assertEquals(1, repository.profileCalls)
+                assertEquals(searchCalls, repository.searchCalls.size)
+                coordinator.reset()
+                coordinator.load(session())
+                coordinator.updateQuery("video")
+                coordinator.search(session())
+                val recovered = coordinator.state.value as SearchUiState.Content
+                assertEquals(listOf("recovered"), recovered.results.items.map { it.id })
+                assertFalse(recovered.hasUnauthorized())
+            }
+        }
+    }
+
+    @Test
+    fun `resolution authorization failure blocks dataset actions and navigation until reset`() = runTest {
+        for (action in datasetActions()) {
+            val repository = FakeSearchRepository(
+                availableProfiles = AppResult.Success(listOf(profile(), profile(22))),
+                pages = mutableListOf(AppResult.Success(page("v1")), AppResult.Success(page("v1"))),
+            )
+            val resources = FakeNetworkResourceRepository(AppResult.Failure(AppError.Unauthorized))
+            val coordinator = coordinator(repository, resources)
+            coordinator.load(session())
+            coordinator.updateQuery("video")
+            coordinator.search(session())
+            coordinator.openResult(session(), "v1")
+            val failed = coordinator.state.value
+            assertTrue(failed.hasUnauthorized())
+            resources.resolution = AppResult.Success(ResolvedNetworkResource.Video(playback()))
+
+            action(coordinator)
+
+            assertEquals(failed, coordinator.state.value)
+            assertEquals(1, repository.profileCalls)
+            assertEquals(1, repository.searchCalls.size)
+            assertEquals(1, resources.resolutionCalls)
+            coordinator.reset()
+            coordinator.load(session())
+            coordinator.updateQuery("video")
+            coordinator.search(session())
+            coordinator.openResult(session(), "v1")
+            val recovered = coordinator.state.value as SearchUiState.Content
+            assertEquals(SearchPendingDestination.Player("request-id"), recovered.pendingDestination)
+            assertFalse(recovered.hasUnauthorized())
+        }
+    }
+
+    @Test
+    fun `forbidden page and resource requests remain retryable`() = runTest {
+        val repository = FakeSearchRepository(
+            pages = mutableListOf(
+                AppResult.Failure(AppError.Forbidden),
+                AppResult.Success(page("v1", hasNext = true)),
+                AppResult.Failure(AppError.Forbidden),
+                AppResult.Success(page("v2", pageNumber = 2)),
+            ),
+        )
+        val resources = FakeNetworkResourceRepository(AppResult.Failure(AppError.Forbidden))
+        val coordinator = coordinator(repository, resources)
+        coordinator.load(session())
+        coordinator.updateQuery("video")
+        coordinator.search(session())
+        coordinator.retry(session())
+        coordinator.loadNext(session())
+        coordinator.loadNext(session())
+        coordinator.openResult(session(), "v1")
+        resources.resolution = AppResult.Success(ResolvedNetworkResource.Video(playback()))
+
+        coordinator.openResult(session(), "v1")
+
+        val content = coordinator.state.value as SearchUiState.Content
+        assertEquals(listOf("v1", "v2"), content.results.items.map { it.id })
+        assertEquals(SearchPendingDestination.Player("request-id"), content.pendingDestination)
+        assertEquals(4, repository.searchCalls.size)
+        assertEquals(2, resources.resolutionCalls)
+    }
+
+    private fun datasetActions(): List<suspend (SearchCoordinator) -> Unit> = listOf(
+        { it.load(session()) },
+        { it.search(session()) },
+        { it.retry(session()) },
+        { it.selectIndexer(session(), 22) },
+        { it.loadNext(session()) },
+        { it.applyFilters(session(), emptyMap()) },
+        { it.openResult(session(), "v1") },
+    )
+
+    @Test
     @OptIn(ExperimentalCoroutinesApi::class)
     fun `reset discards queued indexer authorization errors`() = runTest {
         val response = PendingNetworkResponse<List<IndexerSourceProfile>>()
@@ -830,13 +960,15 @@ class SearchCoordinatorTest {
 }
 
 private class FakeNetworkResourceRepository(
-    private val resolution: AppResult<ResolvedNetworkResource> =
+    var resolution: AppResult<ResolvedNetworkResource> =
         AppResult.Failure(AppError.NotFound),
     private val resolutionStarted: CompletableDeferred<Unit>? = null,
     private val deferredResolution: CompletableDeferred<AppResult<ResolvedNetworkResource>>? = null,
     private val pendingResolution: PendingNetworkResponse<ResolvedNetworkResource>? = null,
 ) : NetworkResourceRepository {
     var preferredDefinition: TranscodeResolution? = null
+        private set
+    var resolutionCalls = 0
         private set
 
     override suspend fun resolveResource(
@@ -845,6 +977,7 @@ private class FakeNetworkResourceRepository(
         result: NetworkSearchResult,
         preferredDefinition: TranscodeResolution,
     ): AppResult<ResolvedNetworkResource> {
+        resolutionCalls += 1
         this.preferredDefinition = preferredDefinition
         resolutionStarted?.complete(Unit)
         return pendingResolution?.await() ?: deferredResolution?.await() ?: resolution
@@ -875,17 +1008,20 @@ private class FakeSearchRepository(
     private val profile: AppResult<IndexerSourceProfile> =
         AppResult.Success(profile()),
     private val pages: MutableList<AppResult<NetworkSearchPage>> = mutableListOf(),
-    private val availableProfiles: AppResult<List<IndexerSourceProfile>>? = null,
+    var availableProfiles: AppResult<List<IndexerSourceProfile>>? = null,
     private val pagingStarted: CompletableDeferred<Unit>? = null,
     private val pagingResult: CompletableDeferred<AppResult<NetworkSearchPage>>? = null,
     private val pendingPage: PendingNetworkResponse<NetworkSearchPage>? = null,
 ) : SearchRepository {
     val searchCalls = mutableListOf<SearchCall>()
     val searchFilters = mutableListOf<Map<String, SearchFilterValue>>()
+    var profileCalls = 0
+        private set
 
     override suspend fun getAvailableProfiles(
         session: Session,
     ): AppResult<List<IndexerSourceProfile>> {
+        profileCalls += 1
         availableProfiles?.let { return it }
         val loadedIndexers = when (indexers) {
             is AppResult.Failure -> return indexers

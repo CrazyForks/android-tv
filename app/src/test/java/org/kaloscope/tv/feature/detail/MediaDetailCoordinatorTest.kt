@@ -23,6 +23,47 @@ import org.kaloscope.tv.test.StubMediaRepository
 
 class MediaDetailCoordinatorTest {
     @Test
+    fun `parent and child authorization failures block reload until reset`() = runBlocking {
+        for (childFailure in listOf(false, true)) {
+            val responses = mutableListOf<AppResult<MediaDetail>>()
+            if (childFailure) {
+                responses += AppResult.Success(detail(201, children = listOf(summary(301))))
+            }
+            responses += AppResult.Failure(AppError.Unauthorized)
+            responses += AppResult.Success(detail(202))
+            val repository = DetailFakeRepository(responses)
+            val coordinator = MediaDetailCoordinator(repository)
+            coordinator.load(session(), 201)
+            val failed = coordinator.state.value
+            val callCount = repository.detailCalls.size
+            assertTrue(failed.hasUnauthorized())
+
+            coordinator.load(session(), 202)
+
+            assertEquals(failed, coordinator.state.value)
+            assertEquals(callCount, repository.detailCalls.size)
+            coordinator.reset()
+            coordinator.load(session(), 202)
+            assertEquals(MediaDetailUiState.Content(detail(202)), coordinator.state.value)
+            assertEquals(callCount + 1, repository.detailCalls.size)
+        }
+    }
+
+    @Test
+    fun `forbidden detail requests remain retryable`() = runBlocking {
+        val repository = DetailFakeRepository(
+            mutableListOf(AppResult.Failure(AppError.Forbidden), AppResult.Success(detail(201))),
+        )
+        val coordinator = MediaDetailCoordinator(repository)
+        coordinator.load(session(), 201)
+
+        coordinator.load(session(), 201)
+
+        assertEquals(MediaDetailUiState.Content(detail(201)), coordinator.state.value)
+        assertEquals(listOf(201L, 201L), repository.detailCalls)
+    }
+
+    @Test
     fun `loads real media detail`() = runBlocking {
         val detail = detail(201)
         val coordinator = MediaDetailCoordinator(

@@ -72,6 +72,7 @@ class LibraryCoordinator(
     }
 
     suspend fun load(session: Session) {
+        if (hasUnauthorizedError()) return
         mutableState.value = LibraryUiState.Loading
         val result = repository.getLibraries(session)
         // A cancelled request can still return a result that belongs to the previous source.
@@ -98,6 +99,7 @@ class LibraryCoordinator(
     }
 
     suspend fun search(session: Session) {
+        if (hasUnauthorizedError()) return
         val content = mutableState.value as? LibraryUiState.Content ?: return
         mutableState.value = content.copy(
             submittedKeyword = content.query.trim(),
@@ -112,6 +114,7 @@ class LibraryCoordinator(
         session: Session,
         libraryId: Long,
     ) {
+        if (hasUnauthorizedError()) return
         val content = mutableState.value as? LibraryUiState.Content ?: return
         if (libraryId == content.selectedLibraryId ||
             content.libraries.none { it.id == libraryId }
@@ -130,12 +133,14 @@ class LibraryCoordinator(
     }
 
     suspend fun retryContent(session: Session) {
+        if (hasUnauthorizedError()) return
         val content = mutableState.value as? LibraryUiState.Content ?: return
         mutableState.value = content.copy(items = LibraryItemsState.Loading)
         loadFirstPage(session)
     }
 
     suspend fun loadNext(session: Session) {
+        if (hasUnauthorizedError()) return
         val content = mutableState.value as? LibraryUiState.Content ?: return
         val currentItems = content.items as? LibraryItemsState.Content ?: return
         if (!currentItems.hasNext || currentItems.isLoadingMore) {
@@ -223,6 +228,17 @@ class LibraryCoordinator(
                 )
             }
         }
+    }
+
+    // Keep authentication failures visible until root session handling resets this screen.
+    private fun hasUnauthorizedError(): Boolean = when (val current = mutableState.value) {
+        is LibraryUiState.Error -> current.error == AppError.Unauthorized
+        is LibraryUiState.Content -> when (val items = current.items) {
+            is LibraryItemsState.Error -> items.error == AppError.Unauthorized
+            is LibraryItemsState.Content -> items.loadMoreError == AppError.Unauthorized
+            else -> false
+        }
+        else -> false
     }
 
     private inline fun updateContent(

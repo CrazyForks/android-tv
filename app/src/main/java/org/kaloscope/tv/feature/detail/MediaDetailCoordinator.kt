@@ -48,6 +48,13 @@ class MediaDetailCoordinator(
         session: Session,
         mediaId: Long,
     ) {
+        val currentError = when (val current = mutableState.value) {
+            is MediaDetailUiState.Error -> current.error
+            is MediaDetailUiState.Content -> current.childDetailError
+            MediaDetailUiState.Loading -> null
+        }
+        // Root session handling must observe authentication failures before a reload clears them.
+        if (currentError == AppError.Unauthorized) return
         generation += 1
         val requestGeneration = generation
         childDetailCache.clear()
