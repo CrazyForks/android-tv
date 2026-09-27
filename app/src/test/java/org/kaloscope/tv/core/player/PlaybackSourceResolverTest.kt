@@ -1,6 +1,7 @@
 package org.kaloscope.tv.core.player
 
 import java.util.Base64
+import javax.xml.parsers.DocumentBuilderFactory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -172,6 +173,37 @@ class PlaybackSourceResolverTest {
             """.trimIndent(),
             String(Base64.getDecoder().decode(encodedManifest), Charsets.UTF_8),
         )
+    }
+
+    @Test
+    fun `UTF-8 BOM prefixed DASH stays valid XML after data URI encoding`() {
+        val prefixes = listOf(
+            "\uFEFF",
+            "\uFEFF<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+        )
+        val session = session()
+        for (prefix in prefixes) {
+            val source = PlaybackSourceResolver.networkMediaSource(
+                session = session,
+                rawUrl = "$prefix<MPD><Period>" +
+                    "<BaseURL>/_api/media/proxy/片段.mp4</BaseURL></Period></MPD>",
+                videoType = NetworkVideoType.Dash,
+            )
+
+            assertEquals("application/dash+xml", source.mimeType)
+            assertTrue(source.url.startsWith("data:application/dash+xml;base64,"))
+            val manifestBytes = Base64.getDecoder().decode(source.url.substringAfter("base64,"))
+            assertEquals(
+                "$prefix<MPD><Period>" +
+                    "<BaseURL>${session.server.origin}/_api/media/proxy/片段.mp4</BaseURL>" +
+                    "</Period></MPD>",
+                String(manifestBytes, Charsets.UTF_8),
+            )
+            val document = DocumentBuilderFactory.newInstance()
+                .newDocumentBuilder()
+                .parse(manifestBytes.inputStream())
+            assertEquals("MPD", document.documentElement.tagName)
+        }
     }
 
     @Test

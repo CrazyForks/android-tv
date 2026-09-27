@@ -85,7 +85,8 @@ object PlaybackSourceResolver {
     private fun String.isInlineDash(): Boolean = INLINE_DASH.containsMatchIn(this)
 
     private val INLINE_DASH = Regex(
-        pattern = """^\s*(?:<\?xml[\s\S]*?\?>\s*)?<MPD[\s>]""",
+        // UTF-8 XML may start with a BOM, which JVM regex whitespace does not include.
+        pattern = """^\uFEFF?\s*(?:<\?xml[\s\S]*?\?>\s*)?<MPD[\s>]""",
         option = RegexOption.IGNORE_CASE,
     )
     private val INLINE_API_BASE = Regex(

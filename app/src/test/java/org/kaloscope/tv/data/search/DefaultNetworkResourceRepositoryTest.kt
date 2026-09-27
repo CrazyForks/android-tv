@@ -507,6 +507,51 @@ class DefaultNetworkResourceRepositoryTest {
     }
 
     @Test
+    fun `BOM prefixed DASH definition reaches playback as a data URI`() = runTest {
+        val manifest = "\uFEFF<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+            "<MPD><Period><BaseURL>/_api/media/proxy/</BaseURL></Period></MPD>"
+        server.enqueue(
+            response(
+                """
+                {"status":200,"message":"","data":{
+                  "id":"video-1","title":"Video","media_type":"video","video_type":"dash",
+                  "definitions":[{"definition":"1080P","url":${JsonPrimitive(manifest)}}]
+                }}
+                """.trimIndent(),
+            ),
+        )
+        val playbackSession = session()
+
+        val resolved = repository.resolveResource(
+            session = playbackSession,
+            indexerId = 11,
+            result = result("video-1", NetworkMediaType.Video),
+            preferredDefinition = TranscodeResolution.P1080,
+        )
+
+        val source = ((resolved as AppResult.Success).value as ResolvedNetworkResource.Video).source
+        assertEquals(manifest, source.url)
+        assertEquals(0, source.selectedDefinitionIndex)
+        val playbackSource = PlaybackSourceResolver.networkMediaSource(
+            session = playbackSession,
+            rawUrl = source.url,
+            videoType = source.videoType,
+        )
+        assertEquals("application/dash+xml", playbackSource.mimeType)
+        assertTrue(playbackSource.url.startsWith("data:application/dash+xml;base64,"))
+        assertEquals(
+            "\uFEFF<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+                "<MPD><Period><BaseURL>${playbackSession.server.origin}/_api/media/proxy/" +
+                "</BaseURL></Period></MPD>",
+            String(
+                Base64.getDecoder().decode(playbackSource.url.substringAfter("base64,")),
+                Charsets.UTF_8,
+            ),
+        )
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
     fun `first chapter video type preserves missing and explicit override semantics`() = runTest {
         val cases = listOf(
             Triple("hls", null, NetworkVideoType.Hls),
