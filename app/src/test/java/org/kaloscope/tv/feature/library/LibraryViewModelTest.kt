@@ -52,6 +52,80 @@ class LibraryViewModelTest {
     }
 
     @Test
+    fun `stale search and retry preserve the catalog request`() = runTest(dispatcher) {
+        val libraries = CompletableDeferred<AppResult<List<MediaLibrary>>>()
+        repository.pendingLibraries = libraries
+        viewModel.load(session())
+        runCurrent()
+
+        viewModel.search(session())
+        runCurrent()
+        viewModel.retryContent(session())
+        runCurrent()
+        libraries.complete(
+            AppResult.Success(listOf(MediaLibrary(21, "Library", MediaLibraryType.TvShow))),
+        )
+        runCurrent()
+
+        assertEquals(listOf(21L), repository.requests.map { it.libraryId })
+        repository.requests.single().result.complete(AppResult.Success(page(201)))
+        runCurrent()
+        val content = viewModel.uiState.value as LibraryUiState.Content
+        assertEquals(listOf(201L), content.items.items.map { it.id })
+    }
+
+    @Test
+    fun `repeated retry preserves the request and later failure can be retried`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Failure(AppError.Offline))
+        runCurrent()
+        viewModel.retryContent(session())
+        runCurrent()
+        val retryRequest = repository.requests.last()
+
+        repeat(2) {
+            viewModel.retryContent(session())
+            runCurrent()
+        }
+
+        assertFalse(retryRequest.cancelled)
+        assertEquals(2, repository.requests.size)
+        retryRequest.result.complete(AppResult.Failure(AppError.Offline))
+        runCurrent()
+        viewModel.retryContent(session())
+        runCurrent()
+        repository.requests.last().result.complete(AppResult.Success(page(201)))
+        runCurrent()
+        val content = viewModel.uiState.value as LibraryUiState.Content
+        assertEquals(listOf(201L), content.items.items.map { it.id })
+        assertEquals(3, repository.requests.size)
+    }
+
+    @Test
+    fun `stale retry preserves a new search`() = runTest(dispatcher) {
+        viewModel.load(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Failure(AppError.Offline))
+        runCurrent()
+        viewModel.updateQuery("new query")
+        viewModel.search(session())
+        runCurrent()
+        val searchRequest = repository.requests.last()
+
+        viewModel.retryContent(session())
+        runCurrent()
+
+        assertFalse(searchRequest.cancelled)
+        assertEquals(2, repository.requests.size)
+        searchRequest.result.complete(AppResult.Success(page(501)))
+        runCurrent()
+        val content = viewModel.uiState.value as LibraryUiState.Content
+        assertEquals("new query", content.submittedKeyword)
+        assertEquals(listOf(501L), content.items.items.map { it.id })
+    }
+
+    @Test
     fun `selection while libraries are loading preserves the catalog request`() = runTest(dispatcher) {
         val libraries = CompletableDeferred<AppResult<List<MediaLibrary>>>()
         repository.pendingLibraries = libraries

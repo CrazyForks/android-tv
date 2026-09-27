@@ -66,6 +66,39 @@ class SearchViewModelTest {
     }
 
     @Test
+    fun `stale search and filter callbacks preserve the catalog request`() = runTest(dispatcher) {
+        val profiles = CompletableDeferred<AppResult<List<IndexerSourceProfile>>>()
+        repository.pendingProfiles = profiles
+        viewModel.load(session())
+        runCurrent()
+
+        viewModel.search(session())
+        runCurrent()
+        viewModel.applyFilters(session(), emptyMap())
+        runCurrent()
+        viewModel.clearFilters(session())
+        runCurrent()
+        profiles.complete(
+            AppResult.Success(
+                listOf(
+                    IndexerSourceProfile(
+                        indexer = NetworkIndexer(11, "Indexer", null),
+                        pageSize = 20,
+                        keywordRequired = false,
+                    ),
+                ),
+            ),
+        )
+        runCurrent()
+
+        assertEquals(listOf(11L), repository.requests.map { it.indexerId })
+        repository.requests.single().result.complete(AppResult.Success(page("v1")))
+        runCurrent()
+        val content = viewModel.uiState.value as SearchUiState.Content
+        assertEquals(listOf("v1"), content.results.items.map { it.id })
+    }
+
+    @Test
     fun `selection while indexers are loading preserves the catalog request`() = runTest(dispatcher) {
         val profiles = CompletableDeferred<AppResult<List<IndexerSourceProfile>>>()
         repository.pendingProfiles = profiles

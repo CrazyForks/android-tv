@@ -35,6 +35,7 @@ class LibraryViewModel @Inject constructor(
     fun updateQuery(value: String) = coordinator.updateQuery(value)
 
     fun search(session: Session) {
+        if (uiState.value !is LibraryUiState.Content) return
         startRequest { coordinator.search(session) }
     }
 
@@ -54,6 +55,10 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun retryContent(session: Session) {
+        // A stale retry must not cancel a catalog load, search, or an active retry.
+        if ((uiState.value as? LibraryUiState.Content)?.items !is LibraryItemsState.Error) {
+            return
+        }
         startRequest { coordinator.retryContent(session) }
     }
 

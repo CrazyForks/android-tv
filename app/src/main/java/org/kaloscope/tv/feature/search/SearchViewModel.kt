@@ -62,7 +62,10 @@ class SearchViewModel @Inject constructor(
         startRequest { coordinator.selectIndexer(session, indexerId) }
     }
 
-    fun search(session: Session) = startRequest { coordinator.search(session) }
+    fun search(session: Session) {
+        if (uiState.value !is SearchUiState.Content) return
+        startRequest { coordinator.search(session) }
+    }
 
     fun retry(session: Session) {
         // Ignore stale retry callbacks before they can cancel a newer request.
@@ -87,10 +90,12 @@ class SearchViewModel @Inject constructor(
     fun applyFilters(
         session: Session,
         values: Map<String, SearchFilterValue>,
-    ) = startRequest { coordinator.applyFilters(session, values) }
+    ) {
+        if (uiState.value !is SearchUiState.Content) return
+        startRequest { coordinator.applyFilters(session, values) }
+    }
 
-    fun clearFilters(session: Session) =
-        startRequest { coordinator.clearFilters(session) }
+    fun clearFilters(session: Session) = applyFilters(session, emptyMap())
 
     fun rememberFocusedResult(resultId: String) =
         coordinator.rememberFocusedResult(resultId)
