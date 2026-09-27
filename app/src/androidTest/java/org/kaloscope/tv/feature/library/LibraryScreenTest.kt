@@ -41,6 +41,7 @@ import org.kaloscope.tv.core.model.SavedServer
 import org.kaloscope.tv.core.model.Session
 import org.kaloscope.tv.core.model.SessionUser
 import org.kaloscope.tv.test.assertFocusedContentCardBottomInsideViewport
+import org.kaloscope.tv.test.assertContentCardFocusOutline
 import org.kaloscope.tv.test.assertFocusedContentCardScale
 import org.kaloscope.tv.test.assertFocusedContentCardSurface
 import org.kaloscope.tv.test.assertFocusedContentCardTopClearance
@@ -212,6 +213,11 @@ class LibraryScreenTest {
             bitmap = focused,
             sampleX = sampleInset,
             sampleY = focused.height - sampleInset,
+        )
+        assertContentCardFocusOutline(
+            label = "Library media card",
+            bitmap = focused,
+            density = composeRule.density.density,
         )
     }
 

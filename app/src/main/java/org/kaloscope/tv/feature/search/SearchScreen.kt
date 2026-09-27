@@ -81,6 +81,7 @@ import org.kaloscope.tv.core.designsystem.KaloscopeButton
 import org.kaloscope.tv.core.designsystem.KaloscopeControlSize
 import org.kaloscope.tv.core.designsystem.KaloscopeControlVariant
 import org.kaloscope.tv.core.designsystem.KaloscopeFocusSurface
+import org.kaloscope.tv.core.designsystem.KaloscopeFocusSurfaceVariant
 import org.kaloscope.tv.core.designsystem.KaloscopeIconButton
 import org.kaloscope.tv.core.designsystem.KaloscopeLoadingLayout
 import org.kaloscope.tv.core.designsystem.Muted
@@ -913,6 +914,7 @@ private fun NetworkResultCard(
         focusedContainerColor = ContentCardFocused,
         focusScale = BrowseLayoutTokens.GridCardFocusScale,
         focusScaleEdgeClearance = BrowseLayoutTokens.GridCardFocusEdgeClearance,
+        variant = KaloscopeFocusSurfaceVariant.GridCard,
         modifier = modifier
             .fillMaxWidth()
             .testTag("network-result-${result.id}")

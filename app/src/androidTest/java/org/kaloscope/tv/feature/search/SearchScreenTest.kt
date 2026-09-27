@@ -58,6 +58,7 @@ import org.kaloscope.tv.core.model.SearchFilterValue
 import org.kaloscope.tv.core.model.Session
 import org.kaloscope.tv.core.model.SessionUser
 import org.kaloscope.tv.test.assertFocusedContentCardBottomInsideViewport
+import org.kaloscope.tv.test.assertContentCardFocusOutline
 import org.kaloscope.tv.test.assertFocusedContentCardScale
 import org.kaloscope.tv.test.assertFocusedContentCardSurface
 import org.kaloscope.tv.test.assertFocusedContentCardTopClearance
@@ -232,6 +233,11 @@ class SearchScreenTest {
             bitmap = focused,
             sampleX = focused.width / 2,
             sampleY = focused.height - sampleInset,
+        )
+        assertContentCardFocusOutline(
+            label = "Network result card",
+            bitmap = focused,
+            density = composeRule.density.density,
         )
     }
 

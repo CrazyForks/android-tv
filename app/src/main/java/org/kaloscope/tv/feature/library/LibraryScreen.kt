@@ -68,6 +68,7 @@ import org.kaloscope.tv.core.designsystem.KaloscopeButton
 import org.kaloscope.tv.core.designsystem.KaloscopeControlSize
 import org.kaloscope.tv.core.designsystem.KaloscopeControlVariant
 import org.kaloscope.tv.core.designsystem.KaloscopeFocusSurface
+import org.kaloscope.tv.core.designsystem.KaloscopeFocusSurfaceVariant
 import org.kaloscope.tv.core.designsystem.KaloscopeIconButton
 import org.kaloscope.tv.core.designsystem.KaloscopeLoadingLayout
 import org.kaloscope.tv.core.designsystem.KaloscopeNavigationIcon
@@ -608,6 +609,7 @@ private fun MediaCard(
         focusedContainerColor = ContentCardFocused,
         focusScale = BrowseLayoutTokens.GridCardFocusScale,
         focusScaleEdgeClearance = BrowseLayoutTokens.GridCardFocusEdgeClearance,
+        variant = KaloscopeFocusSurfaceVariant.GridCard,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("media-card-${media.id}")
