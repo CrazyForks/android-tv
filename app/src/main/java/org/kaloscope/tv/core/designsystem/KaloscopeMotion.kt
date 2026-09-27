@@ -2,6 +2,7 @@ package org.kaloscope.tv.core.designsystem
 
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.ui.unit.dp
 
 object KaloscopeMotion {
     const val FocusMillis = 140
@@ -14,9 +15,12 @@ object KaloscopeMotion {
     // Preserve TV Material's press and release timing for grid cards.
     const val GridCardPressMillis = 120
     const val GridCardReleaseMillis = 300
+    const val SidePanelEnterMillis = 180
+    const val SidePanelScrimEnterMillis = 120
     const val ImageMillis = 150
     const val ContentMillis = 200
     const val BackgroundMillis = 350
 
+    val SidePanelEnterOffset = 24.dp
     val ControlEasing: Easing = LinearOutSlowInEasing
 }

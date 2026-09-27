@@ -9,10 +9,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsEnabled
@@ -25,6 +33,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -65,6 +74,106 @@ class KaloscopeSidePanelTest {
 
         assertEquals(dpToPx(500f), panel.width, dpToPx(1f))
         assertEquals(root.left, panel.left, 1f)
+    }
+
+    @Test
+    fun endPanelFadesAndSlidesInWithoutRestartingOnRecomposition() {
+        assertPanelEntrance(
+            side = KaloscopeSidePanelSide.End,
+            layoutDirection = LayoutDirection.Ltr,
+            expectedOffsetDp = 24f,
+        )
+    }
+
+    @Test
+    fun startPanelEntersFromTheLeft() {
+        assertPanelEntrance(
+            side = KaloscopeSidePanelSide.Start,
+            layoutDirection = LayoutDirection.Ltr,
+            expectedOffsetDp = -24f,
+        )
+    }
+
+    @Test
+    fun endPanelEntersFromTheLeftInRtl() {
+        assertPanelEntrance(
+            side = KaloscopeSidePanelSide.End,
+            layoutDirection = LayoutDirection.Rtl,
+            expectedOffsetDp = -24f,
+        )
+    }
+
+    @Test
+    fun backDuringEntranceClosesImmediatelyAndAllowsReopening() {
+        composeRule.mainClock.autoAdvance = false
+        val open = mutableStateOf(true)
+        var dismissCount = 0
+        composeRule.setContent {
+            KaloscopeTheme {
+                val triggerFocus = remember { FocusRequester() }
+                val rowFocus = remember { FocusRequester() }
+                LaunchedEffect(open.value) {
+                    withFrameNanos { }
+                    if (open.value) rowFocus.requestFocus() else triggerFocus.requestFocus()
+                }
+                Box(Modifier.fillMaxSize()) {
+                    KaloscopeButton(
+                        onClick = { open.value = true },
+                        modifier = Modifier
+                            .focusRequester(triggerFocus)
+                            .testTag("panel-trigger"),
+                    ) {}
+                    if (open.value) {
+                        KaloscopeSidePanel(
+                            title = "Panel",
+                            palette = testPalette(),
+                            onDismiss = {
+                                dismissCount += 1
+                                open.value = false
+                            },
+                            modifier = Modifier.testTag("side-panel"),
+                        ) {
+                            KaloscopeSidePanelSelectionRow(
+                                title = "Option",
+                                onClick = {},
+                                modifier = Modifier
+                                    .focusRequester(rowFocus)
+                                    .testTag("panel-option"),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        composeRule.mainClock.advanceTimeBy(48)
+        composeRule.onNodeWithTag("panel-option")
+            .assertIsFocused()
+            .performKeyInput {
+                pressKey(Key.DirectionUp)
+                pressKey(Key.DirectionDown)
+                pressKey(Key.DirectionLeft)
+                pressKey(Key.DirectionRight)
+            }
+            .assertIsFocused()
+
+        pressBack()
+        composeRule.runOnIdle { assertEquals(1, dismissCount) }
+        composeRule.mainClock.advanceTimeBy(32)
+        composeRule.onNodeWithTag("side-panel").assertDoesNotExist()
+        composeRule.onNodeWithTag("panel-trigger").assertIsFocused()
+        composeRule.mainClock.advanceTimeBy(240)
+        composeRule.onNodeWithTag("side-panel").assertDoesNotExist()
+
+        composeRule.onNodeWithTag("panel-trigger")
+            .performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.mainClock.advanceTimeBy(48)
+        composeRule.onNodeWithTag("panel-option").assertIsFocused()
+        pressBack()
+        composeRule.mainClock.advanceTimeBy(32)
+        composeRule.onNodeWithTag("side-panel").assertDoesNotExist()
+        composeRule.onNodeWithTag("panel-trigger").assertIsFocused()
+        composeRule.runOnIdle { assertEquals(2, dismissCount) }
     }
 
     @Test
@@ -390,6 +499,69 @@ class KaloscopeSidePanelTest {
 
         assertEquals(dpToPx(14f), iconBounds.width, 0.5f)
         assertEquals(hintTextVisibleCenter, iconVisibleCenter, 0.25f)
+    }
+
+    private fun assertPanelEntrance(
+        side: KaloscopeSidePanelSide,
+        layoutDirection: LayoutDirection,
+        expectedOffsetDp: Float,
+    ) {
+        composeRule.mainClock.autoAdvance = false
+        val title = mutableStateOf("Panel")
+        composeRule.setContent {
+            KaloscopeTheme {
+                CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+                    Box(Modifier.fillMaxSize().background(Color.White)) {
+                        KaloscopeSidePanel(
+                            title = title.value,
+                            palette = testPalette().copy(panelColor = Color.Black, panelAlpha = 1f),
+                            onDismiss = {},
+                            side = side,
+                            size = KaloscopeSidePanelSize.Compact,
+                        ) {
+                            Box(Modifier.fillMaxSize().testTag("panel-content"))
+                        }
+                    }
+                }
+            }
+        }
+
+        val content = composeRule.onNodeWithTag("panel-content")
+        val initialLeft = content.fetchSemanticsNode().boundsInRoot.left
+        val initial = composeRule.onRoot().captureToImage().asAndroidBitmap()
+        val scrimX = if (expectedOffsetDp < 0) initial.width - 1 else 0
+        val panelX = if (expectedOffsetDp < 0) {
+            dpToPx(200f).toInt()
+        } else {
+            initial.width - 1 - dpToPx(200f).toInt()
+        }
+        val sampleY = initial.height / 2
+        assertEquals(255, AndroidColor.red(initial.getPixel(scrimX, sampleY)))
+        assertEquals(255, AndroidColor.red(initial.getPixel(panelX, sampleY)))
+
+        composeRule.mainClock.advanceTimeBy(80)
+        val enteringLeft = content.fetchSemanticsNode().boundsInRoot.left
+        val entering = composeRule.onRoot().captureToImage().asAndroidBitmap()
+        val enteringScrim = AndroidColor.red(entering.getPixel(scrimX, sampleY))
+        val enteringPanel = AndroidColor.red(entering.getPixel(panelX, sampleY))
+
+        composeRule.mainClock.advanceTimeBy(240)
+        val settledLeft = content.fetchSemanticsNode().boundsInRoot.left
+        val settled = composeRule.onRoot().captureToImage().asAndroidBitmap()
+        assertEquals(dpToPx(expectedOffsetDp), initialLeft - settledLeft, 1f)
+        assertTrue(kotlin.math.abs(enteringLeft - settledLeft) > 0f)
+        assertTrue(
+            kotlin.math.abs(enteringLeft - settledLeft) <
+                kotlin.math.abs(initialLeft - settledLeft),
+        )
+        assertEquals(107f, AndroidColor.red(settled.getPixel(scrimX, sampleY)).toFloat(), 2f)
+        assertEquals(0, AndroidColor.red(settled.getPixel(panelX, sampleY)))
+        assertTrue("Scrim should darken during entry", enteringScrim in 109..254)
+        assertTrue("Panel should fade in during entry", enteringPanel in 1..254)
+
+        composeRule.runOnIdle { title.value = "Updated panel" }
+        composeRule.mainClock.advanceTimeByFrame()
+        assertEquals(settledLeft, content.fetchSemanticsNode().boundsInRoot.left, 1f)
     }
 
     private fun setPanel(
