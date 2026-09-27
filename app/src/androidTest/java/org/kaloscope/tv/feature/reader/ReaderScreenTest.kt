@@ -482,13 +482,46 @@ class ReaderScreenTest {
         composeRule.onNodeWithTag("image-reader-scroll")
             .performKeyInput { pressKey(Key.DirectionCenter) }
         composeRule.mainClock.advanceTimeByFrame()
+        composeRule.mainClock.advanceTimeBy(192)
         composeRule.onNodeWithTag("reader-title-overlay").assertExists()
+        control("章节").assertIsFocused()
 
         pressBack()
-        composeRule.mainClock.advanceTimeBy(500)
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.mainClock.advanceTimeBy(64)
+
+        composeRule.onNodeWithTag("reader-bottom-controls").assertExists()
+        composeRule.onNodeWithTag("reader-title-overlay").assertExists()
+        composeRule.mainClock.advanceTimeBy(80)
 
         composeRule.onNodeWithTag("reader-bottom-controls").assertDoesNotExist()
         composeRule.onNodeWithTag("reader-title-overlay").assertDoesNotExist()
+        composeRule.onNodeWithTag("image-reader-scroll").assertIsFocused()
+    }
+
+    @Test
+    fun textTitleRemainsVisibleWhenControlsFadeOut() {
+        composeRule.mainClock.autoAdvance = false
+        setReader(textState(text = "正文"))
+        composeRule.mainClock.advanceTimeBy(3_400)
+        val content = composeRule.onNodeWithTag("text-reader-content")
+        content.performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.mainClock.advanceTimeBy(192)
+        control("章节").assertIsFocused()
+        composeRule.onNodeWithTag("reader-title-overlay").assertExists()
+
+        pressBack()
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.mainClock.advanceTimeBy(64)
+
+        composeRule.onNodeWithTag("reader-bottom-controls").assertExists()
+        composeRule.onNodeWithTag("reader-title-overlay").assertExists()
+        composeRule.mainClock.advanceTimeBy(80)
+
+        composeRule.onNodeWithTag("reader-bottom-controls").assertDoesNotExist()
+        composeRule.onNodeWithTag("reader-title-overlay").assertExists()
+        content.assertIsFocused()
     }
 
     @Test

@@ -3,6 +3,7 @@ package org.kaloscope.tv.feature.reader
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -54,6 +55,7 @@ import org.kaloscope.tv.core.designsystem.KaloscopeChoiceDialog
 import org.kaloscope.tv.core.designsystem.KaloscopeChoiceDialogOption
 import org.kaloscope.tv.core.designsystem.KaloscopeControlSize
 import org.kaloscope.tv.core.designsystem.KaloscopeLoadingLayout
+import org.kaloscope.tv.core.designsystem.KaloscopeMotion
 import org.kaloscope.tv.core.designsystem.KaloscopeSidePanel
 import org.kaloscope.tv.core.designsystem.KaloscopeSidePanelAdjustmentRow
 import org.kaloscope.tv.core.designsystem.KaloscopeSidePanelChoiceRow
@@ -356,8 +358,8 @@ private fun ActiveReader(
 
         AnimatedVisibility(
             visible = state is ReaderUiState.Text || initialTitleVisible || controlsVisible,
-            enter = fadeIn(),
-            exit = fadeOut(),
+            enter = fadeIn(tween(KaloscopeMotion.ReaderControlEnterMillis)),
+            exit = fadeOut(tween(KaloscopeMotion.ReaderControlExitMillis)),
             modifier = Modifier.align(Alignment.TopCenter),
         ) {
             ReaderTitleOverlay(
@@ -380,8 +382,8 @@ private fun ActiveReader(
 
         AnimatedVisibility(
             visible = controlsVisible,
-            enter = fadeIn(),
-            exit = fadeOut(),
+            enter = fadeIn(tween(KaloscopeMotion.ReaderControlEnterMillis)),
+            exit = fadeOut(tween(KaloscopeMotion.ReaderControlExitMillis)),
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             ReaderBottomControls(
