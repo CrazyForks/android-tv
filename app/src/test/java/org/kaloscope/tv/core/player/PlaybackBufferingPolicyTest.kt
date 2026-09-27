@@ -7,6 +7,49 @@ import org.junit.Test
 
 class PlaybackBufferingPolicyTest {
     @Test
+    fun `fallback stays pending while its source is idle or buffering`() {
+        for (playbackState in listOf(Player.STATE_IDLE, Player.STATE_BUFFERING)) {
+            assertTrue(
+                PlaybackBufferingPolicy.fallbackInProgress(
+                    previouslyInProgress = true,
+                    playbackState = playbackState,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `ready and ended both complete a pending fallback`() {
+        for (playbackState in listOf(Player.STATE_READY, Player.STATE_ENDED)) {
+            assertFalse(
+                PlaybackBufferingPolicy.fallbackInProgress(
+                    previouslyInProgress = true,
+                    playbackState = playbackState,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `playback events do not start fallback on their own`() {
+        for (
+            playbackState in listOf(
+                Player.STATE_IDLE,
+                Player.STATE_BUFFERING,
+                Player.STATE_READY,
+                Player.STATE_ENDED,
+            )
+        ) {
+            assertFalse(
+                PlaybackBufferingPolicy.fallbackInProgress(
+                    previouslyInProgress = false,
+                    playbackState = playbackState,
+                ),
+            )
+        }
+    }
+
+    @Test
     fun `ready state latches for the controller lifetime`() {
         assertFalse(
             PlaybackBufferingPolicy.hasBeenReady(

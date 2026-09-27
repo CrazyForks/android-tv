@@ -95,8 +95,10 @@ class PlaybackController internal constructor(
                     previouslyReady = currentStatus.hasBeenReady,
                     playbackState = player.playbackState,
                 ),
-                fallbackInProgress = currentStatus.fallbackInProgress &&
-                    player.playbackState != Player.STATE_READY,
+                fallbackInProgress = PlaybackBufferingPolicy.fallbackInProgress(
+                    previouslyInProgress = currentStatus.fallbackInProgress,
+                    playbackState = player.playbackState,
+                ),
                 effectiveDurationMillis = player.duration
                     .takeIf { it > 0 }
                     ?: probeDurationMillis.coerceAtLeast(0L),

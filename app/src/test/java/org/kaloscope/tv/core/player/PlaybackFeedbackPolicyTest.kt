@@ -82,6 +82,43 @@ class PlaybackFeedbackPolicyTest {
     }
 
     @Test
+    fun `fallback ending before ready exposes replay controls`() {
+        for (playWhenReady in listOf(false, true)) {
+            var hasBeenReady = false
+            var fallbackInProgress = true
+            for (
+                playbackState in listOf(
+                    Player.STATE_IDLE,
+                    Player.STATE_BUFFERING,
+                    Player.STATE_ENDED,
+                )
+            ) {
+                hasBeenReady = PlaybackBufferingPolicy.hasBeenReady(
+                    previouslyReady = hasBeenReady,
+                    playbackState = playbackState,
+                )
+                fallbackInProgress = PlaybackBufferingPolicy.fallbackInProgress(
+                    previouslyInProgress = fallbackInProgress,
+                    playbackState = playbackState,
+                )
+                assertEquals(
+                    if (playbackState == Player.STATE_ENDED) {
+                        PlaybackFeedback.Ready
+                    } else {
+                        PlaybackFeedback.FallingBack
+                    },
+                    feedback(
+                        playbackState = playbackState,
+                        hasBeenReady = hasBeenReady,
+                        fallbackInProgress = fallbackInProgress,
+                        playWhenReady = playWhenReady,
+                    ),
+                )
+            }
+        }
+    }
+
+    @Test
     fun `ended playback preserves error and operation feedback priority`() {
         assertEquals(
             PlaybackFeedback.Failed,

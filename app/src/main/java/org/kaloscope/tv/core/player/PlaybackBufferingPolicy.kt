@@ -8,6 +8,15 @@ internal object PlaybackBufferingPolicy {
         playbackState: Int,
     ): Boolean = previouslyReady || playbackState == Player.STATE_READY
 
+    fun fallbackInProgress(
+        previouslyInProgress: Boolean,
+        playbackState: Int,
+    ): Boolean =
+        // Resuming at the end can finish a fallback without ever becoming ready.
+        previouslyInProgress &&
+            playbackState != Player.STATE_READY &&
+            playbackState != Player.STATE_ENDED
+
     fun isRebuffering(
         hasBeenReady: Boolean,
         playbackState: Int,
