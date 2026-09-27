@@ -3,6 +3,7 @@ package org.kaloscope.tv.core.player
 import java.util.Base64
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.kaloscope.tv.core.model.NetworkVideoType
 import org.kaloscope.tv.core.model.SavedServer
@@ -170,6 +171,61 @@ class PlaybackSourceResolverTest {
                 <MPD><Period><BaseURL>http://127.0.0.1:8000/_api/media/proxy/</BaseURL></Period></MPD>
             """.trimIndent(),
             String(Base64.getDecoder().decode(encodedManifest), Charsets.UTF_8),
+        )
+    }
+
+    @Test
+    fun `inline DASH API bases retain opening tag attributes and whitespace`() {
+        val openingTags = listOf(
+            "<BaseURL >",
+            """<BaseURL serviceLocation="primary">""",
+            "<BaseURL serviceLocation='primary' availabilityTimeOffset='0'>",
+            "<BaseURL\n serviceLocation=\"primary\"\n >",
+            """<BaseURL serviceLocation="edge>/_api/metadata/">""",
+            "<BaseURL serviceLocation='edge>/_api/metadata/'>",
+        )
+        val session = session("https://server.example:8443")
+        val apiPath = "/_api/media/proxy/片段.mp4?part=1&amp;signature=a%2Fb+z"
+        for (openingTag in openingTags) {
+            val prefix = "<MPD><Period>$openingTag\n  "
+            val suffix = "\n</BaseURL></Period></MPD>"
+
+            val source = PlaybackSourceResolver.networkMediaSource(
+                session = session,
+                rawUrl = "$prefix$apiPath$suffix",
+                videoType = NetworkVideoType.Dash,
+            )
+
+            assertEquals("application/dash+xml", source.mimeType)
+            assertTrue(source.url.startsWith("data:application/dash+xml;base64,"))
+            val manifest = String(
+                Base64.getDecoder().decode(source.url.substringAfter("base64,")),
+                Charsets.UTF_8,
+            )
+            assertEquals(openingTag, "$prefix${session.server.origin}$apiPath$suffix", manifest)
+        }
+    }
+
+    @Test
+    fun `inline DASH preserves external URLs relative segments and attribute values`() {
+        val manifest = """
+            <MPD><Period>
+              <BaseURL serviceLocation="edge>/_api/metadata/">https://cdn.example/_api/video.mp4?a=1&amp;b=2</BaseURL>
+              <BaseURL serviceLocation='/_api/metadata/'>segments/</BaseURL>
+              <BaseURL availabilityTimeOffset="0">/media/video.mp4</BaseURL>
+              <SupplementalProperty value="/_api/metadata/" />
+            </Period></MPD>
+        """.trimIndent()
+
+        val source = PlaybackSourceResolver.networkMediaSource(
+            session = session(),
+            rawUrl = manifest,
+            videoType = NetworkVideoType.Dash,
+        )
+
+        assertEquals(
+            manifest,
+            String(Base64.getDecoder().decode(source.url.substringAfter("base64,")), Charsets.UTF_8),
         )
     }
 }

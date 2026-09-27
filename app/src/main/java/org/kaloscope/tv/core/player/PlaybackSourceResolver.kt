@@ -89,7 +89,8 @@ object PlaybackSourceResolver {
         option = RegexOption.IGNORE_CASE,
     )
     private val INLINE_API_BASE = Regex(
-        pattern = """(<BaseURL>\s*)/_api/""",
+        // Quoted attributes may contain '>'; only the element's text is an API URL.
+        pattern = """(<BaseURL(?:\s(?:[^\"'<>]|\"[^\"]*\"|'[^']*')*+)?>\s*)/_api/""",
         option = RegexOption.IGNORE_CASE,
     )
 }

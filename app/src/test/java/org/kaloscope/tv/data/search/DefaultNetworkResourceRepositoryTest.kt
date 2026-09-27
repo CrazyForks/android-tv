@@ -1,5 +1,6 @@
 package org.kaloscope.tv.data.search
 
+import java.util.Base64
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
@@ -462,7 +463,7 @@ class DefaultNetworkResourceRepositoryTest {
                     """
                     {"status":200,"message":"","data":{
                       "id":"series-1","title":"Episode 1","media_type":"video",
-                      "url":"<MPD><Period><BaseURL>/_api/media/proxy/</BaseURL></Period></MPD>"
+                      "url":"<MPD><Period><BaseURL>/_api/media/proxy/</BaseURL><BaseURL serviceLocation='backup'>/_api/media/backup/</BaseURL></Period></MPD>"
                     }}
                     """.trimIndent(),
                 ),
@@ -487,6 +488,18 @@ class DefaultNetworkResourceRepositoryTest {
             )
             assertEquals("application/dash+xml", playbackSource.mimeType)
             assertTrue(playbackSource.url.startsWith("data:application/dash+xml;base64,"))
+            val manifest = String(
+                Base64.getDecoder().decode(playbackSource.url.substringAfter("base64,")),
+                Charsets.UTF_8,
+            )
+            assertEquals(
+                "<MPD><Period>" +
+                    "<BaseURL>${playbackSession.server.origin}/_api/media/proxy/</BaseURL>" +
+                    "<BaseURL serviceLocation='backup'>" +
+                    "${playbackSession.server.origin}/_api/media/backup/</BaseURL>" +
+                    "</Period></MPD>",
+                manifest,
+            )
             server.takeRequest()
             val chapterRequest = server.takeRequest()
             assertTrue(chapterRequest.body.readUtf8().contains(""""chapter_id":"episode-1""""))
