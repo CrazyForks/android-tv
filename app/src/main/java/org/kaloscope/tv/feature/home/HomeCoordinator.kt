@@ -48,7 +48,15 @@ class HomeCoordinator(
     }
 
     suspend fun load(session: Session) {
-        val retainedContent = mutableState.value as? HomeUiState.Content
+        val current = mutableState.value
+        val currentError = when (current) {
+            is HomeUiState.Content -> current.refreshError
+            is HomeUiState.Error -> current.error
+            else -> null
+        }
+        // Progress-triggered refreshes must not hide auth failures before root session handling.
+        if (currentError == AppError.Unauthorized) return
+        val retainedContent = current as? HomeUiState.Content
         if (retainedContent == null) {
             mutableState.value = HomeUiState.Loading
         } else {

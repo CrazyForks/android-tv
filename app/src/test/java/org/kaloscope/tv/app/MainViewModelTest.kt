@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.kaloscope.tv.core.common.AppError
@@ -108,6 +109,43 @@ class MainViewModelTest {
         assertFalse(viewModel.homeState.value.hasUnauthorized())
         assertEquals(HomeUiState.Content(latestItems), viewModel.homeState.value)
         assertEquals(listOf("server-id", "other-server"), repository.requests.map { it.serverId })
+    }
+
+    @Test
+    fun `forced refresh retains authorization failure until session reset`() = runTest(dispatcher) {
+        val items = listOf(historyItem(301))
+        viewModel.loadHome(session())
+        runCurrent()
+        repository.requests.single().result.complete(AppResult.Success(items))
+        runCurrent()
+        viewModel.loadHome(session(), force = true)
+        runCurrent()
+        repository.requests.last().result.complete(AppResult.Failure(AppError.Unauthorized))
+        runCurrent()
+
+        // Playback progress saves may request another refresh before root handles the 401.
+        repeat(2) {
+            viewModel.loadHome(session(), force = true)
+            runCurrent()
+        }
+
+        assertTrue(viewModel.homeState.value.hasUnauthorized())
+        assertEquals(
+            HomeUiState.Content(items, refreshError = AppError.Unauthorized),
+            viewModel.homeState.value,
+        )
+        assertEquals(2, repository.requests.size)
+
+        viewModel.reset()
+        viewModel.loadHome(session())
+        runCurrent()
+        val latestItems = listOf(historyItem(501))
+        repository.requests.last().result.complete(AppResult.Success(latestItems))
+        runCurrent()
+
+        assertEquals(3, repository.requests.size)
+        assertEquals(HomeUiState.Content(latestItems), viewModel.homeState.value)
+        assertFalse(viewModel.homeState.value.hasUnauthorized())
     }
 
     @Test

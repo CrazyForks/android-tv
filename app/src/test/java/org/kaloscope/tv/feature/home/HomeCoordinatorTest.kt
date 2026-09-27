@@ -179,14 +179,91 @@ class HomeCoordinatorTest {
         assertEquals(items, state.items)
         assertEquals(AppError.Offline, state.refreshError)
     }
+
+    @Test
+    fun `initial authorization failure blocks loading until session reset`() = runBlocking {
+        val repository = FakeHistoryRepository(AppResult.Failure(AppError.Unauthorized))
+        val coordinator = HomeCoordinator(repository)
+        coordinator.load(session())
+
+        val items = listOf(historyItem())
+        repository.result = AppResult.Success(items)
+        coordinator.load(session())
+
+        assertEquals(HomeUiState.Error(AppError.Unauthorized), coordinator.state.value)
+        assertEquals(1, repository.loadCount)
+
+        coordinator.reset()
+        coordinator.load(session())
+
+        assertEquals(HomeUiState.Content(items), coordinator.state.value)
+        assertEquals(2, repository.loadCount)
+    }
+
+    @Test
+    fun `refresh authorization failure retains history until session reset`() = runBlocking {
+        val items = listOf(historyItem())
+        val repository = FakeHistoryRepository(AppResult.Success(items))
+        val coordinator = HomeCoordinator(repository)
+        coordinator.load(session())
+        repository.result = AppResult.Failure(AppError.Unauthorized)
+        coordinator.load(session())
+
+        repository.result = AppResult.Success(emptyList())
+        coordinator.load(session())
+
+        assertEquals(
+            HomeUiState.Content(items, refreshError = AppError.Unauthorized),
+            coordinator.state.value,
+        )
+        assertEquals(2, repository.loadCount)
+
+        coordinator.reset()
+        coordinator.load(session())
+
+        assertEquals(HomeUiState.Empty, coordinator.state.value)
+        assertEquals(3, repository.loadCount)
+    }
+
+    @Test
+    fun `ordinary load and refresh failures remain retryable`() = runBlocking {
+        for (error in listOf(AppError.Forbidden, AppError.Offline, AppError.Timeout)) {
+            for (retainHistory in listOf(false, true)) {
+                val items = listOf(historyItem())
+                val repository = FakeHistoryRepository(AppResult.Success(items))
+                val coordinator = HomeCoordinator(repository)
+                if (retainHistory) coordinator.load(session())
+                repository.result = AppResult.Failure(error)
+                coordinator.load(session())
+                assertEquals(
+                    if (retainHistory) HomeUiState.Content(items, refreshError = error)
+                    else HomeUiState.Error(error),
+                    coordinator.state.value,
+                )
+
+                val updatedItems = listOf(historyItem().copy(positionSeconds = 1800))
+                repository.result = AppResult.Success(updatedItems)
+                coordinator.load(session())
+
+                assertEquals(HomeUiState.Content(updatedItems), coordinator.state.value)
+                assertEquals(if (retainHistory) 3 else 2, repository.loadCount)
+            }
+        }
+    }
 }
 
 private class FakeHistoryRepository(
     var result: AppResult<List<WatchHistoryItem>>,
 ) : HistoryRepository {
+    var loadCount = 0
+        private set
+
     override suspend fun getRecentVideos(
         session: Session,
-    ): AppResult<List<WatchHistoryItem>> = result
+    ): AppResult<List<WatchHistoryItem>> {
+        loadCount += 1
+        return result
+    }
 
     override suspend fun recordVideoProgress(
         session: Session,
