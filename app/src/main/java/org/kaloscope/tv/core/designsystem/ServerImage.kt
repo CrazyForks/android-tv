@@ -44,9 +44,10 @@ internal enum class ServerImageVisualState {
 @Composable
 private fun ServerImageSkeleton(
     modifier: Modifier = Modifier,
+    frozen: Boolean = false,
 ) {
     val transition = rememberInfiniteTransition(label = "image-skeleton")
-    val offset = transition.animateFloat(
+    val animatedOffset = transition.animateFloat(
         initialValue = -1f,
         targetValue = 2f,
         animationSpec = infiniteRepeatable(
@@ -54,7 +55,10 @@ private fun ServerImageSkeleton(
             repeatMode = RepeatMode.Restart,
         ),
         label = "image-skeleton-offset",
-    ).value
+    )
+    // Keep the last loading frame beneath the image until its fade-in is complete.
+    val frozenOffset = remember(frozen) { animatedOffset.value }
+    val offset = if (frozen) frozenOffset else animatedOffset.value
     val base = Color(0xFF202B40)
     val highlight = Color(0xFF34425E)
     val brush = Brush.linearGradient(
@@ -81,17 +85,20 @@ internal fun ServerImagePlaceholder(
                     ServerImageVisualState.Loading -> "server-image-loading"
                     ServerImageVisualState.Missing -> "server-image-missing"
                     ServerImageVisualState.Failed -> "server-image-failed"
-                    ServerImageVisualState.Success -> "server-image-success"
+                    ServerImageVisualState.Success -> "server-image-handoff"
                 },
             )
             .background(Color(0xFF25334D)),
         contentAlignment = Alignment.Center,
     ) {
         when (state) {
-            ServerImageVisualState.Loading -> ServerImageSkeleton(Modifier.fillMaxSize())
+            ServerImageVisualState.Loading,
+            ServerImageVisualState.Success -> ServerImageSkeleton(
+                modifier = Modifier.fillMaxSize(),
+                frozen = state == ServerImageVisualState.Success,
+            )
             ServerImageVisualState.Missing,
             ServerImageVisualState.Failed -> ServerImageBrokenIcon()
-            ServerImageVisualState.Success -> Unit
         }
     }
 }
@@ -133,7 +140,7 @@ fun ServerImage(
             label = "server-image-alpha",
         )
         Box(modifier = modifier.background(Color(0xFF25334D))) {
-            if (visualState != ServerImageVisualState.Success) {
+            if (visualState != ServerImageVisualState.Success || imageAlpha < 1f) {
                 ServerImagePlaceholder(
                     state = visualState,
                     modifier = Modifier.fillMaxSize(),
