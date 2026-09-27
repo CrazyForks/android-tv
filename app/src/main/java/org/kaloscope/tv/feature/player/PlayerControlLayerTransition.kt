@@ -22,8 +22,12 @@ internal fun AnimatedPlayerControlLayer(
         targetState = layer,
         modifier = modifier.fillMaxSize(),
         transitionSpec = {
-            fadeIn(tween(KaloscopeMotion.ContentMillis)) togetherWith
-                fadeOut(tween(KaloscopeMotion.ContentMillis))
+            val durationMillis = when {
+                targetState == PlayerControlLayer.Hidden -> KaloscopeMotion.PlayerControlExitMillis
+                initialState == PlayerControlLayer.Hidden -> KaloscopeMotion.PlayerControlEnterMillis
+                else -> KaloscopeMotion.ContentMillis
+            }
+            fadeIn(tween(durationMillis)) togetherWith fadeOut(tween(durationMillis))
         },
         contentAlignment = Alignment.TopStart,
         label = "player-control-layer",

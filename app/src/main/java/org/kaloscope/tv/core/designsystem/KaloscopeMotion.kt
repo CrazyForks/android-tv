@@ -17,6 +17,8 @@ object KaloscopeMotion {
     const val GridCardReleaseMillis = 300
     const val SidePanelEnterMillis = 180
     const val SidePanelScrimEnterMillis = 120
+    const val PlayerControlEnterMillis = 160
+    const val PlayerControlExitMillis = 120
     const val ImageMillis = 150
     const val ContentMillis = 200
     const val BackgroundMillis = 350
