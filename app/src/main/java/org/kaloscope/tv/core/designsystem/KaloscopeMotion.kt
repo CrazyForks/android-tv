@@ -22,6 +22,8 @@ object KaloscopeMotion {
     const val ChoiceDialogStartScale = 0.98f
     const val PlayerControlEnterMillis = 160
     const val PlayerControlExitMillis = 120
+    const val PlayerProgressFocusMillis = 120
+    const val PlayerProgressBlurMillis = 80
     const val ReaderControlEnterMillis = 160
     const val ReaderControlExitMillis = 120
     const val ImageMillis = 150

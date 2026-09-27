@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -895,6 +896,18 @@ private fun SeekablePlayerProgress(
     val enabled = durationMillis > 0
     val progressDescription = stringResource(R.string.player_progress)
     var focused by remember { mutableStateOf(false) }
+    val focusProgress by animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = if (focused) {
+                KaloscopeMotion.PlayerProgressFocusMillis
+            } else {
+                KaloscopeMotion.PlayerProgressBlurMillis
+            },
+            easing = KaloscopeMotion.ControlEasing,
+        ),
+        label = "player-progress-focus",
+    )
     val displayPosition = positionMillis
     val progress = if (enabled) {
         (displayPosition.toFloat() / durationMillis).coerceIn(0f, 1f)
@@ -987,7 +1000,7 @@ private fun SeekablePlayerProgress(
                     .align(Alignment.CenterStart)
                     .offset(x = trackHorizontalInset)
                     .width(trackWidth)
-                    .height(if (focused) 9.dp else 6.dp)
+                    .height(6.dp + 3.dp * focusProgress)
                     .testTag("player-progress-track"),
             ) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1044,7 +1057,7 @@ private fun SeekablePlayerProgress(
                 }
             }
             if (enabled) {
-                val thumbContainerSize = if (focused) 20.dp else 16.dp
+                val thumbContainerSize = 16.dp + 4.dp * focusProgress
                 val thumbRadius = thumbContainerSize / 2
                 Box(
                     modifier = Modifier
@@ -1058,11 +1071,7 @@ private fun SeekablePlayerProgress(
                         )
                         .size(thumbContainerSize)
                         .background(
-                            if (focused) {
-                                progressColor.copy(alpha = 0.28f)
-                            } else {
-                                Color.Transparent
-                            },
+                            progressColor.copy(alpha = 0.28f * focusProgress),
                             CircleShape,
                         )
                         .testTag("player-progress-thumb"),

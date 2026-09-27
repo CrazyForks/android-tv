@@ -1565,12 +1565,29 @@ class PlayerControlsTest {
             }
         }
 
+        composeRule.onNodeWithContentDescription("播放")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+        composeRule.mainClock.autoAdvance = false
         composeRule.onNodeWithTag("player-progress")
             .performSemanticsAction(SemanticsActions.RequestFocus)
-            .performKeyInput {
-                keyDown(Key.DirectionRight)
-            }
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.mainClock.advanceTimeBy(32)
+
+        // A seek preview must update immediately while focus motion is still running.
+        composeRule.onNodeWithTag("player-progress")
+            .performKeyInput { keyDown(Key.DirectionRight) }
+        composeRule.mainClock.advanceTimeByFrame()
         composeRule.onAllNodesWithText("00:20").assertCountEquals(1)
+        val trackBounds = composeRule.onNodeWithTag("player-progress-track")
+            .fetchSemanticsNode().boundsInRoot
+        val thumbBounds = composeRule.onNodeWithTag("player-progress-thumb")
+            .fetchSemanticsNode().boundsInRoot
+        assertEquals(
+            "Focus motion must not delay the thumb's seek position",
+            trackBounds.left + trackBounds.width / 3f,
+            thumbBounds.center.x,
+            1f,
+        )
         composeRule.runOnIdle {
             assertTrue(seekTargets.isEmpty())
         }
@@ -1670,7 +1687,7 @@ class PlayerControlsTest {
     }
 
     @Test
-    fun focusedProgressThumbIsVerticallyCenteredOnTrack() {
+    fun progressFocusTransitionKeepsThumbCenteredAndLayoutStable() {
         lateinit var density: Density
 
         composeRule.setContent {
@@ -1701,27 +1718,74 @@ class PlayerControlsTest {
             }
         }
 
-        composeRule.onNodeWithTag("player-progress")
-            .performSemanticsAction(SemanticsActions.RequestFocus)
+        val progress = composeRule.onNodeWithTag("player-progress")
+        val track = composeRule.onNodeWithTag("player-progress-track")
+        val thumb = composeRule.onNodeWithTag("player-progress-thumb")
+        val thumbRing = composeRule.onNodeWithTag("player-progress-thumb-ring")
+        val playPause = composeRule.onNodeWithContentDescription("播放")
+        playPause.performSemanticsAction(SemanticsActions.RequestFocus)
 
-        val trackCenterY = composeRule.onNodeWithTag("player-progress-track")
-            .fetchSemanticsNode()
-            .boundsInRoot
-            .center
-            .y
-        val thumbCenterY = composeRule.onNodeWithTag("player-progress-thumb")
-            .fetchSemanticsNode()
-            .boundsInRoot
-            .center
-            .y
+        val progressBounds = progress.fetchSemanticsNode().boundsInRoot
+        val restingTrackBounds = track.fetchSemanticsNode().boundsInRoot
+        val restingThumbBounds = thumb.fetchSemanticsNode().boundsInRoot
         val tolerance = with(density) { 1.dp.toPx() }
+        assertEquals(with(density) { 50.dp.toPx() }, progressBounds.height, tolerance)
+        assertEquals(with(density) { 6.dp.toPx() }, restingTrackBounds.height, tolerance)
+        assertEquals(with(density) { 16.dp.toPx() }, restingThumbBounds.width, tolerance)
 
+        fun assertStableGeometry() {
+            val trackBounds = track.fetchSemanticsNode().boundsInRoot
+            val thumbBounds = thumb.fetchSemanticsNode().boundsInRoot
+            val ringBounds = thumbRing.fetchSemanticsNode().boundsInRoot
+            assertEquals(progressBounds, progress.fetchSemanticsNode().boundsInRoot)
+            assertEquals(restingThumbBounds.center.x, thumbBounds.center.x, tolerance)
+            assertEquals(trackBounds.center.y, thumbBounds.center.y, tolerance)
+            assertEquals(with(density) { 16.dp.toPx() }, ringBounds.width, tolerance)
+            assertEquals(with(density) { 16.dp.toPx() }, ringBounds.height, tolerance)
+        }
+
+        composeRule.mainClock.autoAdvance = false
+        progress.performSemanticsAction(SemanticsActions.RequestFocus).assertIsFocused()
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.mainClock.advanceTimeBy(32)
+        val focusingTrackHeight = track.fetchSemanticsNode().boundsInRoot.height
+        val focusingThumbWidth = thumb.fetchSemanticsNode().boundsInRoot.width
+        assertTrue(focusingTrackHeight > restingTrackBounds.height)
+        assertTrue(focusingTrackHeight < with(density) { 9.dp.toPx() })
+        assertTrue(focusingThumbWidth > restingThumbBounds.width)
+        assertTrue(focusingThumbWidth < with(density) { 20.dp.toPx() })
+        assertStableGeometry()
+
+        composeRule.mainClock.advanceTimeBy(120)
+        val focusedTrackHeight = track.fetchSemanticsNode().boundsInRoot.height
+        val focusedThumbWidth = thumb.fetchSemanticsNode().boundsInRoot.width
+        assertEquals(with(density) { 9.dp.toPx() }, focusedTrackHeight, tolerance)
+        assertEquals(with(density) { 20.dp.toPx() }, focusedThumbWidth, tolerance)
+        assertStableGeometry()
+
+        playPause.performSemanticsAction(SemanticsActions.RequestFocus).assertIsFocused()
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.mainClock.advanceTimeBy(32)
+        val blurringTrackHeight = track.fetchSemanticsNode().boundsInRoot.height
+        val blurringThumbWidth = thumb.fetchSemanticsNode().boundsInRoot.width
+        assertTrue(blurringTrackHeight > restingTrackBounds.height)
+        assertTrue(blurringTrackHeight < focusedTrackHeight)
+        assertTrue(blurringThumbWidth > restingThumbBounds.width)
+        assertTrue(blurringThumbWidth < focusedThumbWidth)
+        assertStableGeometry()
+
+        composeRule.mainClock.advanceTimeBy(80)
         assertEquals(
-            "Focused progress thumb and track should share a center line",
-            trackCenterY,
-            thumbCenterY,
+            restingTrackBounds.height,
+            track.fetchSemanticsNode().boundsInRoot.height,
             tolerance,
         )
+        assertEquals(
+            restingThumbBounds.width,
+            thumb.fetchSemanticsNode().boundsInRoot.width,
+            tolerance,
+        )
+        assertStableGeometry()
     }
 
     @Test
