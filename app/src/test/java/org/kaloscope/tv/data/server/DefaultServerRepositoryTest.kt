@@ -6,6 +6,9 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.kaloscope.tv.core.common.AppError
@@ -13,6 +16,8 @@ import org.kaloscope.tv.core.common.AppResult
 import org.kaloscope.tv.core.model.SavedServer
 import org.kaloscope.tv.core.network.ApiClientFactory
 import org.kaloscope.tv.core.storage.ServerStore
+import org.kaloscope.tv.feature.server.ServerSetupCoordinator
+import org.kaloscope.tv.feature.server.ServerSetupError
 
 class DefaultServerRepositoryTest {
     private lateinit var sourceServer: MockWebServer
@@ -76,6 +81,38 @@ class DefaultServerRepositoryTest {
             AppResult.Failure(AppError.InvalidData("server_redirect")),
             result,
         )
+    }
+
+    @Test
+    fun `setup rejects unsupported IPv6 host and can test a corrected address`() = runTest {
+        val coordinator = ServerSetupCoordinator(repository, createServerId = { "fixture-id" })
+        val unsupportedUrl = "http://[fe80::1%25eth0]:8000"
+        coordinator.updateName("Home")
+        coordinator.updateUrl(unsupportedUrl)
+
+        coordinator.testConnection()
+
+        val rejected = coordinator.state.value
+        assertEquals(ServerSetupError.InvalidUrl, rejected.error)
+        assertEquals("Home", rejected.name)
+        assertEquals(unsupportedUrl, rejected.url)
+        assertFalse(rejected.isTesting)
+        assertFalse(rejected.canSave)
+        assertNull(rejected.verifiedOrigin)
+        assertNull(rejected.serverVersion)
+
+        sourceServer.enqueue(versionResponse("1.2.3"))
+        val correctedOrigin = sourceServer.url("/").toString().removeSuffix("/")
+        coordinator.updateUrl(correctedOrigin)
+        coordinator.testConnection()
+
+        val verified = coordinator.state.value
+        assertNull(verified.error)
+        assertFalse(verified.isTesting)
+        assertTrue(verified.canSave)
+        assertEquals(correctedOrigin, verified.verifiedOrigin)
+        assertEquals("1.2.3", verified.serverVersion)
+        assertEquals(1, sourceServer.requestCount)
     }
 
     private fun versionResponse(version: String) = MockResponse()

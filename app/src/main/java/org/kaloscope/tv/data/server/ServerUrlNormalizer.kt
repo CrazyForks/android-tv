@@ -2,6 +2,7 @@ package org.kaloscope.tv.data.server
 
 import java.net.URI
 import java.net.URISyntaxException
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 enum class ServerUrlError {
     Empty,
@@ -54,6 +55,11 @@ object ServerUrlNormalizer {
         // URI.host already includes the brackets required for an IPv6 origin.
         val host = uri.host
         val port = if (uri.port == -1) "" else ":${uri.port}"
-        return "$scheme://${host.lowercase()}$port"
+        val origin = "$scheme://${host.lowercase()}$port"
+        // URI also accepts scoped IPv6 hosts that the HTTP client cannot use.
+        if (origin.toHttpUrlOrNull() == null) {
+            throw InvalidServerUrl(ServerUrlError.MissingHost)
+        }
+        return origin
     }
 }
