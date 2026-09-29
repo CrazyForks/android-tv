@@ -54,10 +54,7 @@ internal fun resolveKaloscopeControlFocusColor(
     material: KaloscopeControlFocusMaterial,
 ): Color = when (material) {
     KaloscopeControlFocusMaterial.None -> Color.Transparent
-    KaloscopeControlFocusMaterial.Focused,
-    KaloscopeControlFocusMaterial.SelectedFocused,
-    -> KaloscopeControlTokens.FocusedSurface
-
+    KaloscopeControlFocusMaterial.Focused -> KaloscopeControlTokens.FocusedSurface
     KaloscopeControlFocusMaterial.DangerFocused -> DangerFocusedSurface
 }
 
@@ -71,7 +68,6 @@ internal enum class KaloscopeControlBaseMaterial {
 internal enum class KaloscopeControlFocusMaterial {
     None,
     Focused,
-    SelectedFocused,
     DangerFocused,
 }
 
@@ -116,9 +112,6 @@ internal fun resolveKaloscopeControlState(
 
         selected && preserveSelectionOnFocus ->
             KaloscopeControlFocusMaterial.None
-
-        selected && variant != KaloscopeControlVariant.Sidebar ->
-            KaloscopeControlFocusMaterial.SelectedFocused
 
         else -> KaloscopeControlFocusMaterial.Focused
     }

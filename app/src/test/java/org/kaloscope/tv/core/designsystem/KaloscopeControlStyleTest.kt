@@ -12,19 +12,26 @@ class KaloscopeControlStyleTest {
     @Test
     fun selectedMaterialsUseAccentAtRestAndNeutralWhiteWhenFocused() {
         val palette = AccentColor.Green.accentPalette()
+        val state = resolveKaloscopeControlState(
+            variant = KaloscopeControlVariant.Filled,
+            size = KaloscopeControlSize.Compact,
+            tone = KaloscopeControlTone.Default,
+            selected = true,
+            enabled = true,
+            focused = true,
+            pressed = false,
+        )
 
         assertEquals(
             palette.controlSelected,
             resolveKaloscopeControlBaseColor(
-                KaloscopeControlBaseMaterial.Selected,
+                state.baseMaterial,
                 palette,
             ),
         )
         assertEquals(
             ControlFocused,
-            resolveKaloscopeControlFocusColor(
-                KaloscopeControlFocusMaterial.SelectedFocused,
-            ),
+            resolveKaloscopeControlFocusColor(state.focusMaterial),
         )
         assertEquals(
             SidebarSelected,
@@ -110,7 +117,7 @@ class KaloscopeControlStyleTest {
     }
 
     @Test
-    fun focusedNonSidebarSelectionUsesSelectedFocusedMaterial() {
+    fun focusedNonSidebarSelectionUsesNeutralFocusColor() {
         val state = resolveKaloscopeControlState(
             variant = KaloscopeControlVariant.Filled,
             size = KaloscopeControlSize.Compact,
@@ -122,8 +129,8 @@ class KaloscopeControlStyleTest {
         )
 
         assertEquals(
-            KaloscopeControlFocusMaterial.SelectedFocused,
-            state.focusMaterial,
+            ControlFocused,
+            resolveKaloscopeControlFocusColor(state.focusMaterial),
         )
         assertEquals(OnControlFocused, state.contentColor)
     }
@@ -142,13 +149,37 @@ class KaloscopeControlStyleTest {
 
         assertEquals(KaloscopeControlBaseMaterial.Selected, state.baseMaterial)
         assertEquals(
-            KaloscopeControlFocusMaterial.SelectedFocused,
-            state.focusMaterial,
+            ControlFocused,
+            resolveKaloscopeControlFocusColor(state.focusMaterial),
         )
         assertFalse(state.showPressedShade)
         assertEquals(8.dp, state.elevation)
         assertEquals(1.04f, state.scale)
         assertEquals(Color(0xFF101725), state.contentColor)
+    }
+
+    @Test
+    fun preservedSelectionKeepsItsColorUnlessDangerFocusTakesPriority() {
+        for (variant in KaloscopeControlVariant.entries) {
+            for (tone in KaloscopeControlTone.entries) {
+                val state = resolveKaloscopeControlState(
+                    variant = variant,
+                    size = KaloscopeControlSize.Compact,
+                    tone = tone,
+                    selected = true,
+                    enabled = true,
+                    focused = true,
+                    pressed = false,
+                    preserveSelectionOnFocus = true,
+                )
+
+                assertEquals(
+                    if (tone == KaloscopeControlTone.Danger) DangerFocusedSurface else Color.Transparent,
+                    resolveKaloscopeControlFocusColor(state.focusMaterial),
+                )
+                assertEquals(OnBackground, state.contentColor)
+            }
+        }
     }
 
     @Test
