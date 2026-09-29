@@ -6,16 +6,17 @@ The server is user-managed and is not part of this repository.
 ## Working rules
 
 1. Run `git status --short` before editing; preserve unrelated user changes.
-2. Use `rg` to inspect the affected implementation, callers, resources, and
+2. For clear bugs and small features, investigate, implement, and verify
+   directly within the permissions below. Clarify only missing business
+   information, necessary scope expansion, or material product or architecture
+   decisions. Keep local questions targeted; do not start a full design interview.
+3. Use `rg` to inspect the affected implementation, callers, resources, and
    tests. Start with the code map below rather than scanning the entire project.
-3. For client behavior, follow the user's requirements, then current production
-   code and tests. For build assumptions, read the Gradle files. For API changes,
-   verify routes, encoding, DTOs, and behavior against public upstream source or
-   documentation; local fixtures alone do not prove the server contract.
-4. Implement the smallest complete change. Avoid unrelated refactors,
+4. For client behavior, follow the user's requirements, then current production
+   code and tests. Use the build configuration for build assumptions and the
+   upstream verification rule under Networking and security for API contracts.
+5. Implement the smallest complete change. Avoid unrelated refactors,
    speculative abstractions, empty screens, and placeholder repositories.
-5. Run relevant targeted checks, inspect the final diff, and report what changed,
-   what was verified, and any remaining uncertainty. Never invent API contracts.
 
 Keep the project portable: do not make it depend on sibling repositories,
 absolute paths, local accounts, browser sessions, private servers, or
@@ -28,7 +29,29 @@ paths, keystores, or local configuration. Use synthetic data in tests and
 examples. Do not log authorization headers or response bodies containing private
 data, or inspect private configuration to obtain test credentials.
 
+## Operation permissions
+
+- Within the requested scope, inspect files, make edits, and run targeted JVM
+  tests or filtered device tests against already installed matching app/test
+  APKs without asking for another confirmation.
+- Full unit suites, lint, APK builds, and unfiltered connected tests require
+  explicit permission after explaining which checks are needed and why. This
+  includes `:app:testDebugUnitTest` without `--tests`, `:app:lintDebug`,
+  `:app:lintRelease`, `:app:assembleDebug`, `:app:assembleRelease`, and unfiltered
+  `:app:connectedDebugAndroidTest`. Filtering a device test does not waive
+  permission for an app or test APK build triggered by that task or script.
+- Existing authorization for named checks need not be repeated. Follow any
+  task-specific batch or manual-acceptance checkpoints the user requests.
+- Do not create a branch, stage, commit, push, open a PR, create/push release
+  tags, or publish a release unless explicitly requested. Stage only requested
+  files. Manual acceptance does not by itself authorize these operations.
+
 ## Code map and architecture
+
+Use the code map and the behavior sections relevant to the task. Consult the
+device and golden instructions for device or screenshot work, and Release for
+versioning, signing, or publication workflow changes. Use Verification and
+Handoff for every change.
 
 Kotlin paths below are relative to `app/src/main/java/org/kaloscope/tv/`;
 resource paths are relative to the repository root.
@@ -64,10 +87,11 @@ Established stack:
   Keystore token encryption, Coil, Media3 (ExoPlayer, MediaSession, HLS, DASH,
   Compose UI), and AkDanmaku.
 
-Read `app/build.gradle.kts`, `gradle/libs.versions.toml`, `gradle.properties`, and
-`gradle/wrapper/gradle-wrapper.properties` for current SDK, plugin, and dependency
-versions. Use the wrapper and version catalog. The build uses AGP's built-in
-Kotlin and `com.android.legacy-kapt`; preserve the documented `BuildConfig`,
+For build, dependency, or environment work, read `app/build.gradle.kts`,
+`gradle/libs.versions.toml`, `gradle.properties`, and
+`gradle/wrapper/gradle-wrapper.properties` for current versions and configuration.
+Use the wrapper and version catalog. The build uses AGP's built-in Kotlin and
+`com.android.legacy-kapt`; preserve the documented `BuildConfig`,
 `kotlin-metadata-jvm` kapt dependency, and in-process compiler workarounds unless
 replacing them is in scope and the replacement is verified.
 
@@ -153,6 +177,12 @@ Leanback TV feature and launcher declarations are not the Leanback UI toolkit.
 
 ## Networking and security
 
+- For API changes, verify routes, encoding, DTOs, and behavior against public
+  upstream source or documentation for the user-specified server version. If no
+  version is specified, record the upstream version or commit used and any
+  unverified compatibility assumptions; do not assume the latest upstream
+  applies to every deployment. Local fixtures alone do not prove the server
+  contract. Never invent API contracts.
 - `ServerUrlNormalizer` accepts HTTP(S) origins, rejects credentials, paths,
   queries, and fragments, and normalizes host/scheme/trailing slashes.
   `ApiClientFactory` builds `<origin>/_api/`. Connection redirects must follow
@@ -207,9 +237,15 @@ Leanback TV feature and launcher declarations are not the Leanback UI toolkit.
 
 ## Verification
 
-Add or update tests at the layer matching changed behavior and run the smallest
-relevant checks. JVM tests use JUnit, coroutines-test, and MockWebServer; Compose
-UI and golden tests run on Android. Full regression is not the default.
+Choose checks according to risk and changed behavior. Add or update meaningful
+coverage at the matching layer; do not add tests mechanically for documentation,
+comments, or low-risk mechanical edits. JVM tests use JUnit, coroutines-test,
+and MockWebServer; Compose UI and golden tests run on Android.
+
+Run the smallest relevant checks allowed by Operation permissions. Broaden or
+repeat checks only for new changes, failures, or unresolved risks.
+Documentation-only edits need no Android build unless they change build
+instructions or make claims requiring build verification.
 
 | Change | Verification entry point |
 | --- | --- |
@@ -227,7 +263,10 @@ Run a JVM class or a small set of classes from the repository root, for example:
   --tests 'org.kaloscope.tv.feature.reader.ReaderCoordinatorTest'
 ```
 
-For already installed matching app/test APKs, run only the relevant device test:
+To verify a change on a device, confirm that the installed app/test APKs match
+the source being validated. An older installation can help reproduce baseline
+behavior but does not validate current edits. With matching APKs, run only the
+relevant device test:
 
 ```bash
 adb -s "$tv_serial" shell am instrument -w \
@@ -240,15 +279,7 @@ Use `ClassName#methodName` to narrow instrumentation further. Inspect test
 results for failures and confirm tests actually ran; command exit alone is not
 proof. DTO changes require corresponding fixture and parsing/contract coverage.
 
-Full unit suites, lint, APK builds, and unfiltered connected tests require the
-user's explicit permission after explaining which checks are needed and why.
-This includes `:app:testDebugUnitTest` without `--tests`, `:app:lintDebug`,
-`:app:lintRelease`, `:app:assembleDebug`, `:app:assembleRelease`, and unfiltered
-`:app:connectedDebugAndroidTest`. Existing authorization for named checks need
-not be repeated. Documentation-only edits need no Android build unless they
-change build instructions or make claims requiring build verification.
-
-### Preserve device state and golden baselines
+### Device verification
 
 - Treat the existing authenticated installation and device/AVD state as
   persistent. Reuse it for changes unrelated to setup, login, session handling,
@@ -261,6 +292,9 @@ change build instructions or make claims requiring build verification.
   Do not extract or copy credentials, tokens, server addresses, or other private
   app data to preserve a session. Batch deterministic remote input where safe;
   capture meaningful checkpoints instead of recreating unrelated login flows.
+
+### Golden screenshots
+
 - `scripts/verify-tv-goldens.sh` builds/installs APKs and checks 720p, 1080p, and
   4K at density 320/font scale 1.0. `scripts/update-tv-goldens.sh` additionally
   requires API 28 and replaces baseline assets. Both require exactly one
@@ -270,7 +304,21 @@ change build instructions or make claims requiring build verification.
   persistent device. Regenerate baselines only for an intended visual change;
   inspect actual/diff images instead of updating goldens to hide a failure.
 
-## Release and handoff
+## Handoff
+
+- Review `git diff --check` and the final diff; exclude unrelated edits,
+  generated output (except intended golden assets), local configuration,
+  unexplained TODOs, placeholders, and skipped tests.
+- Report what changed, checks actually executed and their results, and any
+  unavailable command/device or unverified behavior. Never claim a check passed
+  unless it ran successfully.
+- After each feature or fix, suggest an English Conventional Commit message:
+  `<type>(<scope>): <description>`, or `<type>: <description>` when scope is
+  omitted. Allowed types: `feat`, `fix`, `build`, `bump`, `chore`, `ci`, `docs`,
+  `perf`, `refactor`, `revert`, `style`, `test`. Keep the description within
+  50 characters, no trailing period; add a body only for substantial changes.
+
+## Release
 
 - `app/build.gradle.kts` leaves release unsigned if all four signing variables
   are absent, fails fast for partial configuration, and signs only when
@@ -285,15 +333,3 @@ change build instructions or make claims requiring build verification.
   Never print, cache, commit, or upload signing material. Publish the versioned
   APK and SHA-256 checksum; retain the R8 mapping as a workflow artifact.
 - Pin third-party Actions to full commit SHAs and use minimum permissions.
-  Do not create/push release tags or publish a release without explicit approval.
-- Do not commit, push, create a branch, or open a PR unless explicitly asked.
-  Stage only requested files. Review `git diff --check` and the final diff;
-  exclude unrelated edits, generated output (except intended golden assets),
-  local configuration, unexplained TODOs, placeholders, and skipped tests.
-- Report checks actually executed and any unavailable command/device or
-  unverified behavior. Never claim a check passed unless it ran successfully.
-- After each feature or fix, suggest an English Conventional Commit message:
-  `<type>[scope]: <description>`. Allowed types: `feat`, `fix`, `build`, `bump`,
-  `chore`, `ci`, `docs`, `perf`, `refactor`, `revert`, `style`, `test`. Keep the
-  description within 50 characters, no trailing period; add a body only for
-  substantial changes. Do not run `git commit` unless asked.
