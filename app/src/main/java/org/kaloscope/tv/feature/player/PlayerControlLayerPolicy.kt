@@ -21,10 +21,12 @@ internal object PlayerControlLayerPolicy {
         previous: PlaybackFeedback,
         current: PlaybackFeedback,
     ): Boolean =
-        !previous.allowsControlFocus() && current.allowsControlFocus()
+        !allowsControlFocus(previous) && allowsControlFocus(current)
 
     fun allowsControlFocus(feedback: PlaybackFeedback): Boolean =
-        feedback.allowsControlFocus()
+        feedback == PlaybackFeedback.Ready ||
+            feedback == PlaybackFeedback.Rebuffering ||
+            feedback == PlaybackFeedback.FallingBack
 
     fun initialTransition(): PlayerControlLayerTransition =
         PlayerControlLayerTransition(
@@ -71,8 +73,3 @@ internal object PlayerControlLayerPolicy {
             else -> null
         }
 }
-
-private fun PlaybackFeedback.allowsControlFocus(): Boolean =
-    this == PlaybackFeedback.Ready ||
-        this == PlaybackFeedback.Rebuffering ||
-        this == PlaybackFeedback.FallingBack

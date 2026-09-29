@@ -8,6 +8,32 @@ import org.kaloscope.tv.core.player.PlaybackFeedback
 
 class PlayerControlLayerPolicyTest {
     @Test
+    fun `only interactive feedback allows controls and entering it requests focus`() {
+        val interactiveFeedback = setOf(
+            PlaybackFeedback.Ready,
+            PlaybackFeedback.Rebuffering,
+            PlaybackFeedback.FallingBack,
+        )
+        for (feedback in PlaybackFeedback.entries) {
+            assertEquals(
+                feedback.name,
+                feedback in interactiveFeedback,
+                PlayerControlLayerPolicy.allowsControlFocus(feedback),
+            )
+            for (previous in PlaybackFeedback.entries) {
+                assertEquals(
+                    "$previous -> $feedback",
+                    previous !in interactiveFeedback && feedback in interactiveFeedback,
+                    PlayerControlLayerPolicy.shouldRequestFocusForFeedbackTransition(
+                        previous = previous,
+                        current = feedback,
+                    ),
+                )
+            }
+        }
+    }
+
+    @Test
     fun `buffering completion does not request the cached control focus`() {
         assertFalse(
             PlayerControlLayerPolicy.shouldRequestFocusForFeedbackTransition(

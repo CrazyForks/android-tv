@@ -285,11 +285,7 @@ private fun PlayerContent(
     val hasNext = PlaybackRequestNavigator.hasNext(state.request)
     val controlsHandleBack =
         controlLayer != PlayerControlLayer.Hidden &&
-            feedback in setOf(
-                PlaybackFeedback.Ready,
-                PlaybackFeedback.Rebuffering,
-                PlaybackFeedback.FallingBack,
-            )
+            PlayerControlLayerPolicy.allowsControlFocus(feedback)
     val togglePlaybackWithFeedback = {
         if (controller.player.playbackState == Player.STATE_ENDED) {
             // Replay replaces any queued seek and its optimistic position from the ended stream.
@@ -605,11 +601,7 @@ private fun PlayerContent(
         }
         val displayedControlLayer = if (
             controlLayer != PlayerControlLayer.Hidden &&
-            feedback in setOf(
-                PlaybackFeedback.Ready,
-                PlaybackFeedback.Rebuffering,
-                PlaybackFeedback.FallingBack,
-            ) &&
+            PlayerControlLayerPolicy.allowsControlFocus(feedback) &&
             !sidePanelOpen &&
             !state.switchingItem
         ) {
