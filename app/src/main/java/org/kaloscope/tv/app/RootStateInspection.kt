@@ -3,12 +3,12 @@ package org.kaloscope.tv.app
 import org.kaloscope.tv.core.common.AppError
 import org.kaloscope.tv.feature.detail.MediaDetailUiState
 import org.kaloscope.tv.feature.home.HomeUiState
-import org.kaloscope.tv.feature.library.LibraryItemsState
 import org.kaloscope.tv.feature.library.LibraryUiState
+import org.kaloscope.tv.feature.library.hasUnauthorizedError
 import org.kaloscope.tv.feature.player.PlayerUiState
 import org.kaloscope.tv.feature.reader.ReaderUiState
-import org.kaloscope.tv.feature.search.SearchResultsState
 import org.kaloscope.tv.feature.search.SearchUiState
+import org.kaloscope.tv.feature.search.hasUnauthorizedError
 
 internal fun HomeUiState.hasUnauthorized(): Boolean =
     when (this) {
@@ -17,36 +17,9 @@ internal fun HomeUiState.hasUnauthorized(): Boolean =
         else -> false
     }
 
-internal fun LibraryUiState.hasUnauthorized(): Boolean =
-    when (this) {
-        is LibraryUiState.Error -> error == AppError.Unauthorized
-        is LibraryUiState.Content -> when (val itemState = items) {
-            is LibraryItemsState.Error -> itemState.error == AppError.Unauthorized
-            is LibraryItemsState.Content ->
-                itemState.loadMoreError == AppError.Unauthorized
+internal fun LibraryUiState.hasUnauthorized(): Boolean = hasUnauthorizedError()
 
-            else -> false
-        }
-
-        else -> false
-    }
-
-internal fun SearchUiState.hasUnauthorized(): Boolean =
-    when (this) {
-        is SearchUiState.Error -> error == AppError.Unauthorized
-        is SearchUiState.Content -> {
-            val resultUnauthorized = when (val resultState = results) {
-                is SearchResultsState.Error -> resultState.error == AppError.Unauthorized
-                is SearchResultsState.Content ->
-                    resultState.loadMoreError == AppError.Unauthorized
-
-                else -> false
-            }
-            resultUnauthorized || resolutionError == AppError.Unauthorized
-        }
-
-        else -> false
-    }
+internal fun SearchUiState.hasUnauthorized(): Boolean = hasUnauthorizedError()
 
 internal fun MediaDetailUiState.hasUnauthorized(): Boolean =
     when (this) {

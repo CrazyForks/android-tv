@@ -85,6 +85,18 @@ sealed interface SearchResultsState {
     ) : SearchResultsState
 }
 
+// Keep authentication failures visible until root session handling resets this screen.
+internal fun SearchUiState.hasUnauthorizedError(): Boolean = when (this) {
+    is SearchUiState.Error -> error == AppError.Unauthorized
+    is SearchUiState.Content -> resolutionError == AppError.Unauthorized ||
+        when (val resultState = results) {
+            is SearchResultsState.Error -> resultState.error == AppError.Unauthorized
+            is SearchResultsState.Content -> resultState.loadMoreError == AppError.Unauthorized
+            else -> false
+        }
+    else -> false
+}
+
 class SearchCoordinator(
     private val repository: SearchRepository,
     private val requestStore: PlaybackRequestStore,
@@ -102,7 +114,7 @@ class SearchCoordinator(
     }
 
     suspend fun load(session: Session) {
-        if (hasUnauthorizedError()) return
+        if (mutableState.value.hasUnauthorizedError()) return
         mutableState.value = SearchUiState.Loading
         val result = repository.getAvailableProfiles(session)
         // A queued network exception may become a failure result after cancellation.
@@ -134,7 +146,7 @@ class SearchCoordinator(
         session: Session,
         indexerId: Long,
     ) {
-        if (hasUnauthorizedError()) return
+        if (mutableState.value.hasUnauthorizedError()) return
         val content = mutableState.value as? SearchUiState.Content ?: return
         val profile = content.profiles.firstOrNull { it.indexer.id == indexerId } ?: return
         if (content.selectedIndexerId == indexerId) {
@@ -158,7 +170,7 @@ class SearchCoordinator(
     }
 
     suspend fun search(session: Session) {
-        if (hasUnauthorizedError()) return
+        if (mutableState.value.hasUnauthorizedError()) return
         val content = mutableState.value as? SearchUiState.Content ?: return
         val profile = content.selectedProfile
         val keyword = content.query.trim()
@@ -183,7 +195,7 @@ class SearchCoordinator(
     }
 
     suspend fun retry(session: Session) {
-        if (hasUnauthorizedError()) return
+        if (mutableState.value.hasUnauthorizedError()) return
         val content = mutableState.value as? SearchUiState.Content ?: return
         if (content.results is SearchResultsState.Error) {
             mutableState.value = content.copy(results = SearchResultsState.Loading)
@@ -197,7 +209,7 @@ class SearchCoordinator(
     }
 
     suspend fun loadNext(session: Session) {
-        if (hasUnauthorizedError()) return
+        if (mutableState.value.hasUnauthorizedError()) return
         val content = mutableState.value as? SearchUiState.Content ?: return
         val current = content.results as? SearchResultsState.Content ?: return
         if (!current.hasNext || current.isLoadingMore) {
@@ -265,7 +277,7 @@ class SearchCoordinator(
         session: Session,
         values: Map<String, SearchFilterValue>,
     ) {
-        if (hasUnauthorizedError()) return
+        if (mutableState.value.hasUnauthorizedError()) return
         val content = mutableState.value as? SearchUiState.Content ?: return
         val allowedKeys = content.selectedProfile.filters.mapTo(mutableSetOf()) { it.key }
         mutableState.value = content.copy(
@@ -301,7 +313,7 @@ class SearchCoordinator(
         resultId: String,
         settings: TvSettings = TvSettings(),
     ) {
-        if (hasUnauthorizedError()) return
+        if (mutableState.value.hasUnauthorizedError()) return
         val content = mutableState.value as? SearchUiState.Content ?: return
         val result = content.results.items.firstOrNull { it.id == resultId } ?: return
         if (content.resolvingResultId != null) {
@@ -446,18 +458,6 @@ class SearchCoordinator(
                 )
             }
         }
-    }
-
-    // Keep authentication failures visible until root session handling resets this screen.
-    private fun hasUnauthorizedError(): Boolean = when (val current = mutableState.value) {
-        is SearchUiState.Error -> current.error == AppError.Unauthorized
-        is SearchUiState.Content -> current.resolutionError == AppError.Unauthorized ||
-            when (val results = current.results) {
-                is SearchResultsState.Error -> results.error == AppError.Unauthorized
-                is SearchResultsState.Content -> results.loadMoreError == AppError.Unauthorized
-                else -> false
-            }
-        else -> false
     }
 
     private inline fun updateContent(

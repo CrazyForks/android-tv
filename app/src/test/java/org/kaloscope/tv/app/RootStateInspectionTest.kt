@@ -1,5 +1,6 @@
 package org.kaloscope.tv.app
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,9 +12,103 @@ import org.kaloscope.tv.core.model.NetworkVideoType
 import org.kaloscope.tv.core.player.PlaybackRequest
 import org.kaloscope.tv.feature.detail.MediaDetailUiState
 import org.kaloscope.tv.feature.home.HomeUiState
+import org.kaloscope.tv.feature.library.LibraryItemsState
+import org.kaloscope.tv.feature.library.LibraryUiState
 import org.kaloscope.tv.feature.player.PlayerUiState
+import org.kaloscope.tv.feature.search.SearchResultsState
+import org.kaloscope.tv.feature.search.SearchUiState
 
 class RootStateInspectionTest {
+    @Test
+    fun `library invalidates the session only for catalog or page authorization failures`() {
+        val content = LibraryUiState.Content(libraries = emptyList(), selectedLibraryId = 21)
+        val page = LibraryItemsState.Content(
+            items = emptyList(),
+            total = 0,
+            pageNumber = 1,
+            hasNext = false,
+        )
+
+        assertFalse(LibraryUiState.Loading.hasUnauthorized())
+        assertFalse(LibraryUiState.EmptyLibraries.hasUnauthorized())
+        assertFalse(content.hasUnauthorized())
+        assertFalse(content.copy(items = LibraryItemsState.Empty).hasUnauthorized())
+
+        for ((error, invalidatesSession) in listOf(
+            null to false,
+            AppError.Unauthorized to true,
+            AppError.Forbidden to false,
+            AppError.Offline to false,
+            AppError.Timeout to false,
+        )) {
+            assertEquals(
+                invalidatesSession,
+                content.copy(items = page.copy(loadMoreError = error)).hasUnauthorized(),
+            )
+            if (error != null) {
+                assertEquals(invalidatesSession, LibraryUiState.Error(error).hasUnauthorized())
+                assertEquals(
+                    invalidatesSession,
+                    content.copy(items = LibraryItemsState.Error(error)).hasUnauthorized(),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `search inspects catalog page and resolution errors independently`() {
+        val content = SearchUiState.Content(profiles = emptyList(), selectedIndexerId = 11)
+        val page = SearchResultsState.Content(
+            items = emptyList(),
+            total = null,
+            pageNumber = 1,
+            hasNext = false,
+        )
+
+        assertFalse(SearchUiState.Loading.hasUnauthorized())
+        assertFalse(SearchUiState.EmptyIndexers.hasUnauthorized())
+        for (results in listOf(
+            SearchResultsState.AwaitingQuery,
+            SearchResultsState.Loading,
+            SearchResultsState.Empty,
+        )) {
+            assertFalse(content.copy(results = results).hasUnauthorized())
+            assertTrue(
+                content.copy(results = results, resolutionError = AppError.Unauthorized)
+                    .hasUnauthorized(),
+            )
+        }
+
+        for ((error, invalidatesSession) in listOf(
+            null to false,
+            AppError.Unauthorized to true,
+            AppError.Forbidden to false,
+            AppError.Offline to false,
+            AppError.Timeout to false,
+        )) {
+            val pageError = content.copy(results = page.copy(loadMoreError = error))
+            assertEquals(invalidatesSession, pageError.hasUnauthorized())
+            assertTrue(pageError.copy(resolutionError = AppError.Unauthorized).hasUnauthorized())
+            assertEquals(
+                invalidatesSession,
+                content.copy(resolutionError = error).hasUnauthorized(),
+            )
+            assertTrue(
+                content.copy(
+                    results = SearchResultsState.Error(AppError.Unauthorized),
+                    resolutionError = error,
+                ).hasUnauthorized(),
+            )
+            if (error != null) {
+                assertEquals(invalidatesSession, SearchUiState.Error(error).hasUnauthorized())
+                assertEquals(
+                    invalidatesSession,
+                    content.copy(results = SearchResultsState.Error(error)).hasUnauthorized(),
+                )
+            }
+        }
+    }
+
     @Test
     fun `child detail authorization failure invalidates the ready session`() {
         val content = MediaDetailUiState.Content(
