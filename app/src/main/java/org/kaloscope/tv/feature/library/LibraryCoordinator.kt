@@ -30,10 +30,7 @@ sealed interface LibraryUiState {
         val items: LibraryItemsState = LibraryItemsState.Loading,
         val focusedMediaId: Long? = null,
         val gridViewport: GridViewportSnapshot = GridViewportSnapshot.Top,
-    ) : LibraryUiState {
-        val selectedLibrary: MediaLibrary
-            get() = checkNotNull(libraries.firstOrNull { it.id == selectedLibraryId })
-    }
+    ) : LibraryUiState
 }
 
 sealed interface LibraryItemsState {

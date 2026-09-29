@@ -126,7 +126,7 @@ class LibraryCoordinatorTest {
 
         val state = coordinator.state.value as LibraryUiState.Content
         assertEquals(21L, state.selectedLibraryId)
-        assertEquals("剧集库", state.selectedLibrary.name)
+        assertEquals("剧集库", state.libraries.first { it.id == state.selectedLibraryId }.name)
         assertEquals(listOf(201L), state.items.items.map { it.id })
         assertTrue(state.items.hasNext)
         assertEquals(listOf(PageCall(21, 1, 20, null)), repository.pageCalls)
