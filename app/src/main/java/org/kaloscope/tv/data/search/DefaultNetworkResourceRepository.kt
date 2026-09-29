@@ -200,37 +200,41 @@ class DefaultNetworkResourceRepository @Inject constructor(
         resource: IndexerResourceData,
         preferredDefinition: TranscodeResolution,
         fallbackVideoType: NetworkVideoType,
-    ): NetworkPlaybackSource =
-        resource.toPlaybackSource(
+    ): NetworkPlaybackSource {
+        val source = resource.toPlaybackSource(
             indexerId = indexerId,
             fallbackTitle = fallbackTitle,
             preferredDefinition = preferredDefinition,
             preferHevcForDash = videoCodecSupport.shouldPreferHevcForDash(),
             fallbackVideoType = fallbackVideoType,
-        )?.copy(resourceId = resourceId) ?: run {
-            val chapters = resource.toChapters()
-            val chapter = chapters.firstOrNull()
-                ?: throw SerializationException("Missing playable network source")
-            val chapterId = chapter.id
-                ?: throw SerializationException("Missing playable network source")
-            val resolved = details(
-                session = session,
-                indexerId = indexerId,
-                resourceId = resourceId,
-                chapterId = chapterId,
-            )?.toPlaybackSource(
-                indexerId = indexerId,
-                fallbackTitle = chapter.title,
-                preferredDefinition = preferredDefinition,
-                preferHevcForDash = videoCodecSupport.shouldPreferHevcForDash(),
-                fallbackVideoType = resource.videoType.resolveVideoType(fallbackVideoType),
-            ) ?: throw SerializationException("Missing playable network chapter")
-            resolved.copy(
-                resourceId = resourceId,
-                chapters = chapters,
-                selectedChapterIndex = chapters.indices.firstOrNull(),
-            )
+        )
+        if (source != null) {
+            return source.copy(resourceId = resourceId)
         }
+
+        val chapters = resource.toChapters()
+        val chapter = chapters.firstOrNull()
+            ?: throw SerializationException("Missing playable network source")
+        val chapterId = chapter.id
+            ?: throw SerializationException("Missing playable network source")
+        val resolved = details(
+            session = session,
+            indexerId = indexerId,
+            resourceId = resourceId,
+            chapterId = chapterId,
+        )?.toPlaybackSource(
+            indexerId = indexerId,
+            fallbackTitle = chapter.title,
+            preferredDefinition = preferredDefinition,
+            preferHevcForDash = videoCodecSupport.shouldPreferHevcForDash(),
+            fallbackVideoType = resource.videoType.resolveVideoType(fallbackVideoType),
+        ) ?: throw SerializationException("Missing playable network chapter")
+        return resolved.copy(
+            resourceId = resourceId,
+            chapters = chapters,
+            selectedChapterIndex = 0,
+        )
+    }
 
     private suspend fun resolveInitialImage(
         session: Session,
