@@ -10,6 +10,8 @@ object KaloscopeMotion {
     const val ButtonPressMillis = 60
     const val ButtonReleaseMillis = 140
     const val ButtonBlurMillis = 80
+    const val CheckboxSelectMillis = 120
+    const val CheckboxDeselectMillis = 80
     const val GridCardFocusMillis = 160
     const val GridCardBlurMillis = 100
     // Preserve TV Material's press and release timing for grid cards.

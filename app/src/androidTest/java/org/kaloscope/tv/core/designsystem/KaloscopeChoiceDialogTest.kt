@@ -12,6 +12,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -265,7 +266,13 @@ class KaloscopeChoiceDialogTest {
                                     label = label,
                                     selected = { label in selected },
                                     testTag = "choice-$label",
-                                    onSelect = { selected = selected + label },
+                                    onSelect = {
+                                        selected = if (label in selected) {
+                                            selected - label
+                                        } else {
+                                            selected + label
+                                        }
+                                    },
                                 )
                             },
                             onDismiss = {
@@ -290,18 +297,32 @@ class KaloscopeChoiceDialogTest {
             testTag = "choice-滚动-checkbox-indicator-mark",
             useUnmergedTree = true,
         ).assertDoesNotExist()
+        composeRule.mainClock.autoAdvance = false
         composeRule.onNodeWithTag("choice-滚动")
             .performSemanticsAction(SemanticsActions.RequestFocus)
             .performKeyInput { pressKey(Key.Enter) }
-            .assertIsSelected()
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.onNodeWithTag("choice-滚动").assertIsSelected().assertIsFocused()
+        composeRule.mainClock.advanceTimeBy(32)
         composeRule.onNodeWithTag(
             testTag = "choice-滚动-checkbox-indicator-mark",
             useUnmergedTree = true,
         ).assertExists()
+
+        composeRule.onNodeWithTag("choice-滚动").performKeyInput { pressKey(Key.Enter) }
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.onNodeWithTag("choice-滚动").assertIsNotSelected().assertIsFocused()
+        composeRule.runOnIdle { assertTrue(selected.isEmpty()) }
+        composeRule.mainClock.advanceTimeBy(16)
+        composeRule.onNodeWithTag("choice-滚动").performKeyInput { pressKey(Key.Enter) }
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.onNodeWithTag("choice-滚动").assertIsSelected().assertIsFocused()
+
         composeRule.onNodeWithTag("choice-顶部")
             .performSemanticsAction(SemanticsActions.RequestFocus)
             .performKeyInput { pressKey(Key.Enter) }
-            .assertIsSelected()
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.onNodeWithTag("choice-顶部").assertIsSelected().assertIsFocused()
         composeRule.onNodeWithTag(
             testTag = "choice-顶部-checkbox-indicator-mark",
             useUnmergedTree = true,
@@ -317,6 +338,7 @@ class KaloscopeChoiceDialogTest {
             waitForIdleSync()
             sendKeyDownUpSync(AndroidKeyEvent.KEYCODE_BACK)
         }
+        composeRule.mainClock.advanceTimeByFrame()
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("kaloscope-choice-dialog-panel").assertDoesNotExist()

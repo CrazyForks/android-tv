@@ -1,5 +1,7 @@
 package org.kaloscope.tv.core.designsystem
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,6 +17,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.LocalContentColor
@@ -36,10 +39,28 @@ fun KaloscopeSelectionIndicator(
     }
     val contentColor = LocalContentColor.current
     val selectedColor = LocalAccentPalette.current.primary
-    val indicatorColor = if (selected) {
-        selectedColor
+    val unselectedColor = contentColor.copy(alpha = UnselectedOutlineAlpha)
+    val selectionProgress = if (type == KaloscopeSelectionIndicatorType.Checkbox) {
+        animateFloatAsState(
+            targetValue = if (selected) 1f else 0f,
+            animationSpec = tween(
+                durationMillis = if (selected) {
+                    KaloscopeMotion.CheckboxSelectMillis
+                } else {
+                    KaloscopeMotion.CheckboxDeselectMillis
+                },
+                easing = KaloscopeMotion.ControlEasing,
+            ),
+            label = "checkbox-selection",
+        ).value
     } else {
-        contentColor.copy(alpha = UnselectedOutlineAlpha)
+        if (selected) 1f else 0f
+    }
+    val indicatorColor = when {
+        type == KaloscopeSelectionIndicatorType.Checkbox ->
+            lerp(unselectedColor, selectedColor, selectionProgress)
+        selected -> selectedColor
+        else -> unselectedColor
     }
     val indicatorShape = when (type) {
         KaloscopeSelectionIndicatorType.Checkbox -> CheckboxShape
@@ -49,8 +70,8 @@ fun KaloscopeSelectionIndicator(
         modifier = modifier
             .size(IndicatorSize)
             .background(
-                color = if (selected && type == KaloscopeSelectionIndicatorType.Checkbox) {
-                    selectedColor
+                color = if (type == KaloscopeSelectionIndicatorType.Checkbox) {
+                    selectedColor.copy(alpha = selectedColor.alpha * selectionProgress)
                 } else {
                     Color.Transparent
                 },
@@ -60,10 +81,10 @@ fun KaloscopeSelectionIndicator(
             .then(testTag?.let(Modifier::testTag) ?: Modifier),
         contentAlignment = Alignment.Center,
     ) {
-        if (selected) {
+        if (selected || selectionProgress > 0f) {
             when (type) {
                 KaloscopeSelectionIndicatorType.Checkbox -> CheckboxMark(
-                    color = OnControlFocused,
+                    color = OnControlFocused.copy(alpha = selectionProgress),
                     modifier = testTag
                         ?.let { Modifier.testTag("$it-mark") }
                         ?: Modifier,
